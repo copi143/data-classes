@@ -1,0 +1,25 @@
+[package]
+name = "data-classes-derive"
+version = "0.0.0-1"
+edition = "2024"
+authors = ["copi143 <copi143@outlook.com>"]
+license = "MIT OR Apache-2.0"
+description = "Derive macros for the data-classes crate"
+homepage = "https://github.com/copi143/data-classes"
+repository = "https://github.com/copi143/data-classes"
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[features]
+default = []
+full = ["rkyv", "serde", "bytemuck"]
+rkyv = []
+serde = []
+bytemuck = []
+
+[dependencies]
+proc-macro2 = "1.0.103"
+quote = "1.0.42"
+syn = { version = "2.0.111", features = ["full"] }

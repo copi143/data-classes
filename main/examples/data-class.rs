@@ -10,10 +10,24 @@ pub enum Color {
     Blue,
 }
 
-#[data(new, serde, rkyv(cmp, omit-bounds))]
+#[data(new, default, copy, display(comma), serde, rkyv(cmp), pod, zeroable)]
 struct Point {
+    #[default = 1]
     x: i32,
+    #[default = 1]
     y: i32,
+}
+
+#[data(new, default, copy, display(comma), serde, rkyv(cmp), pod, zeroable)]
+struct Point3D {
+    #[default = 1]
+    x: i32,
+    #[default = 1]
+    y: i32,
+    #[default = 1]
+    z: i32,
+    #[new = _]
+    _pad: i32,
 }
 
 /// aaa

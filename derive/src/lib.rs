@@ -8,6 +8,7 @@ mod r#impl {
 }
 
 mod util {
+    pub mod fields_attr;
     pub mod parse_attr_tree;
 }
 

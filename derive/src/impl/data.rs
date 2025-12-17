@@ -2,12 +2,35 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, parse_macro_input};
 
-use crate::util::parse_attr_tree::AttrArgs;
+use crate::util::{
+    fields_attr::{EnabledAttrs, FieldsAttr},
+    parse_attr_tree::AttrArgs,
+};
+
+pub fn fields_list(input: DeriveInput) -> Option<Vec<syn::Ident>> {
+    match &input.data {
+        syn::Data::Struct(syn::DataStruct { fields, .. }) => Some(match fields {
+            syn::Fields::Named(fields) => fields
+                .named
+                .iter()
+                .map(|f| f.ident.as_ref().unwrap().clone())
+                .collect(),
+            syn::Fields::Unnamed(fields) => fields
+                .unnamed
+                .iter()
+                .enumerate()
+                .map(|(i, _)| syn::Ident::new(&format!("{i}"), proc_macro2::Span::call_site()))
+                .collect(),
+            syn::Fields::Unit => vec![],
+        }),
+        _ => None,
+    }
+}
 
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut attr = parse_macro_input!(attr as AttrArgs);
 
-    let input = parse_macro_input!(item as DeriveInput);
+    let mut input = parse_macro_input!(item as DeriveInput);
     let ident = &input.ident;
 
     let mut reprs = Vec::new();
@@ -49,6 +72,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
     }
 
+    let repr_c = attr.get("raw").is_some();
+    let repr_transparent = attr.get("transparent").is_some();
+
     repr_with_no_args!("raw", quote! { C });
     repr_with_no_args!("packed", quote! { packed });
     repr_with_no_args!("transparent", quote! { transparent });
@@ -64,8 +90,37 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     repr_with_no_args!("i64", quote! { i64 });
     repr_with_no_args!("isize", quote! { isize });
 
+    let enabled_attr = &EnabledAttrs {
+        default: attr.get("default").is_some(),
+        new: attr.get("new").is_some(),
+    };
+    let fields_attr = match &mut input.data {
+        syn::Data::Struct(syn::DataStruct {
+            fields: syn::Fields::Named(fields),
+            ..
+        }) => Some(FieldsAttr::parse(&mut fields.named, enabled_attr)),
+        _ => None,
+    };
+
     if let Some(args) = attr.remove("default") {
-        derives.push(quote! { ::core::default::Default });
+        if let Some(attrs) = &fields_attr {
+            if attrs.default_not_modified() {
+                derives.push(quote! { ::core::default::Default });
+            } else {
+                let default_fields = attrs.entries();
+                impls.push(quote! {
+                    impl Default for #ident {
+                        fn default() -> Self {
+                            Self {
+                                #(#default_fields),*
+                            }
+                        }
+                    }
+                });
+            }
+        } else {
+            derives.push(quote! { ::core::default::Default });
+        }
         if !args.is_empty() {
             panic!("#[data(default)] does not accept any arguments");
         }
@@ -102,6 +157,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     #[cfg(feature = "bytemuck")]
     if let Some(args) = attr.remove("pod") {
         derives.push(quote! { ::bytemuck::Pod });
+        if !repr_c && !repr_transparent {
+            reprs.push(quote! { C });
+        }
         if !args.is_empty() {
             panic!("#[data(pod)] does not accept any arguments");
         }
@@ -115,58 +173,149 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    if let Some(args) = attr.remove("debug-display") {
-        impls.push(quote! {
-            impl ::core::fmt::Display for #ident {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    write!(f, "{:?}", self)
-                }
-            }
-        });
-        if !args.is_empty() {
-            panic!("#[data(debug-display)] does not accept any arguments");
+    if let Some(mut args) = attr.remove("display") {
+        if args.is_empty() {
+            panic!("#[data(display)] requires arguments");
         }
-    }
-
-    if let Some(args) = attr.remove("new-default") {
-        derives.push(quote! { ::core::default::Default });
-        impls.push(quote! {
-            impl #ident {
-                pub fn new() -> Self {
-                    Self::default()
-                }
-            }
-        });
-        if !args.is_empty() {
-            panic!("#[data(new-default)] does not accept any arguments");
-        }
-    }
-
-    if let Some(args) = attr.remove("new") {
-        let fields: Vec<(&syn::Ident, &syn::Type)> = match &input.data {
-            syn::Data::Struct(syn::DataStruct {
-                fields: syn::Fields::Named(fields),
-                ..
-            }) => fields
-                .named
-                .iter()
-                .map(|f| (f.ident.as_ref().unwrap(), &f.ty))
-                .collect::<Vec<_>>(),
-            _ => panic!("#[data(new)] can only be applied to structs with named fields"),
-        };
-        let field_names = fields.iter().map(|(name, _)| name).collect::<Vec<_>>();
-        let field_types = fields.iter().map(|(_, ty)| ty).collect::<Vec<_>>();
-        impls.push(quote! {
-            impl #ident {
-                pub fn new(#(#field_names: #field_types),*) -> Self {
-                    Self {
-                        #(#field_names),*
+        if let Some(args) = args.remove("debug") {
+            impls.push(quote! {
+                impl ::core::fmt::Display for #ident {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        write!(f, "{:?}", self)
                     }
                 }
+            });
+            if !args.is_empty() {
+                panic!("#[data(display(debug))] does not accept any arguments");
             }
-        });
+        }
+        if let Some(args) = args.remove("comma") {
+            let Some(fields) = fields_list(input.clone()) else {
+                panic!("#[data(display(comma))] can only be applied to structs");
+            };
+            impls.push(quote! {
+                impl ::core::fmt::Display for #ident {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        let mut first = true;
+                        #({
+                            if !first {
+                                write!(f, ",")?;
+                                first = false;
+                            }
+                            write!(f, "{}", self.#fields)?;
+                        })*
+                        Ok(())
+                    }
+                }
+            });
+            if !args.is_empty() {
+                panic!("#[data(display(comma))] does not accept any arguments");
+            }
+        }
+        if let Some(args) = args.remove("semicolon") {
+            let Some(fields) = fields_list(input.clone()) else {
+                panic!("#[data(display(semicolon))] can only be applied to structs");
+            };
+            impls.push(quote! {
+                impl ::core::fmt::Display for #ident {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        let mut first = true;
+                        #({
+                            if !first {
+                                write!(f, ";")?;
+                                first = false;
+                            }
+                            write!(f, "{}", self.#fields)?;
+                        })*
+                        Ok(())
+                    }
+                }
+            });
+            if !args.is_empty() {
+                panic!("#[data(display(semicolon))] does not accept any arguments");
+            }
+        }
+        if let Some(args) = args.remove("space") {
+            let Some(fields) = fields_list(input.clone()) else {
+                panic!("#[data(display(space))] can only be applied to structs");
+            };
+            impls.push(quote! {
+                impl ::core::fmt::Display for #ident {
+                    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                        let mut first = true;
+                        #({
+                            if !first {
+                                write!(f, " ")?;
+                                first = false;
+                            }
+                            write!(f, "{}", self.#fields)?;
+                        })*
+                        Ok(())
+                    }
+                }
+            });
+            if !args.is_empty() {
+                panic!("#[data(display(space))] does not accept any arguments");
+            }
+        }
         if !args.is_empty() {
-            panic!("#[data(new)] does not accept any arguments");
+            panic!("Unsupported attribute for #[data(display)]: {args}");
+        }
+    }
+
+    if let Some(mut args) = attr.remove("new") {
+        if args.is_empty() {
+            if let Some(attrs) = &fields_attr {
+                let mut field_names = Vec::new();
+                let mut field_types = Vec::new();
+                let mut default_entries = Vec::new();
+                for field in attrs.fields.iter() {
+                    if let Some(new_value) = &field.new_value {
+                        let name = &field.name;
+                        match new_value {
+                            Some(expr) => default_entries.push(quote! {
+                                #name: #expr
+                            }),
+                            None => default_entries.push(quote! {
+                                #name: ::core::default::Default::default()
+                            }),
+                        }
+                    } else {
+                        field_names.push(&field.name);
+                        field_types.push(&field.ty);
+                    }
+                }
+                impls.push(quote! {
+                    impl #ident {
+                        pub fn new(#(#field_names: #field_types),*) -> Self {
+                            Self {
+                                #(#field_names),*,
+                                #(#default_entries),*
+                            }
+                        }
+                    }
+                });
+            } else {
+                panic!("#[data(new)] can only be applied to structs with named fields");
+            }
+        }
+        if let Some(args) = args.remove("default") {
+            if !enabled_attr.default {
+                derives.push(quote! { ::core::default::Default });
+            }
+            impls.push(quote! {
+                impl #ident {
+                    pub fn new() -> Self {
+                        Self::default()
+                    }
+                }
+            });
+            if !args.is_empty() {
+                panic!("#[data(new(default))] does not accept any arguments");
+            }
+        }
+        if !args.is_empty() {
+            panic!("Unsupported attribute for #[data(new)]: {args}");
         }
     }
 

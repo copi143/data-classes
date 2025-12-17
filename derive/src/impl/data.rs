@@ -14,10 +14,20 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut reprs = Vec::new();
     let mut derives = Vec::new();
     let mut impls = Vec::new();
+    let mut rkyv_derives = Vec::new();
 
     derives.extend_from_slice(&[
         quote! { ::core::fmt::Debug },
         quote! { ::core::clone::Clone },
+        quote! { ::core::cmp::PartialEq },
+        quote! { ::core::cmp::Eq },
+        quote! { ::core::cmp::PartialOrd },
+        quote! { ::core::cmp::Ord },
+        quote! { ::core::hash::Hash },
+    ]);
+
+    rkyv_derives.extend_from_slice(&[
+        quote! { ::core::fmt::Debug },
         quote! { ::core::cmp::PartialEq },
         quote! { ::core::cmp::Eq },
         quote! { ::core::cmp::PartialOrd },
@@ -85,8 +95,23 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         derives.push(quote! { ::core::marker::Copy });
     }
 
+    #[cfg(not(feature = "rkyv"))]
+    let (use_rkyv, use_rkyv_bounds) = (false, false);
     #[cfg(feature = "rkyv")]
-    if attr.remove("rkyv") {
+    let (use_rkyv, use_rkyv_bounds) = if attr.remove("rkyv") {
+        if attr.remove("rkyv-with-bounds") {
+            panic!("Cannot use both 'rkyv' and 'rkyv-with-bounds' attributes together");
+        } else {
+            (true, false)
+        }
+    } else if attr.remove("rkyv-with-bounds") {
+        (true, true)
+    } else {
+        (false, false)
+    };
+
+    #[cfg(feature = "rkyv")]
+    if use_rkyv {
         derives.push(quote! { ::rkyv::Archive });
         derives.push(quote! { ::rkyv::Serialize });
         derives.push(quote! { ::rkyv::Deserialize });
@@ -106,6 +131,16 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     #[cfg(feature = "bytemuck")]
     if attr.remove("zeroable") {
         derives.push(quote! { ::bytemuck::Zeroable });
+    }
+
+    if attr.remove("debug-display") {
+        impls.push(quote! {
+            impl ::core::fmt::Display for #ident {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    write!(f, "{:?}", self)
+                }
+            }
+        });
     }
 
     if attr.remove("new-default") {
@@ -148,9 +183,34 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         panic!("Unsupported attribute for #[data]: {:?}", attr);
     }
 
+    let rkyv_derives = if use_rkyv {
+        quote! { #[rkyv(derive(#(#rkyv_derives),*))] }
+    } else {
+        quote! {}
+    };
+
+    let rkyv_compares = if use_rkyv {
+        quote! { #[rkyv(compare(PartialEq, PartialOrd))] }
+    } else {
+        quote! {}
+    };
+
+    let rkyv_bounds = if use_rkyv_bounds {
+        quote! {
+            #[rkyv(serialize_bounds(__S: ::rkyv::ser::Writer + ::rkyv::ser::Allocator, __S::Error: ::rkyv::rancor::Source))]
+            #[rkyv(deserialize_bounds(__D::Error: ::rkyv::rancor::Source))]
+            #[rkyv(bytecheck(bounds(__C: ::rkyv::validation::ArchiveContext)))]
+        }
+    } else {
+        quote! {}
+    };
+
     let expanded = quote! {
         #[repr(#(#reprs),*)]
         #[derive(#(#derives),*)]
+        #rkyv_derives
+        #rkyv_compares
+        #rkyv_bounds
         #input
         #(#impls)*
     };

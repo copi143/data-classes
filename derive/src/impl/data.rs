@@ -116,7 +116,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(fields),
             ..
-        }) => Some(FieldsAttr::parse(&mut fields.named, enabled_attr)),
+        }) => Some(FieldsAttr::parse(ident, &mut fields.named, enabled_attr)),
         _ => None,
     };
 
@@ -170,6 +170,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         if !args.is_empty() {
             panic!("#[data(serde)] does not accept any arguments");
         }
+    }
+    #[cfg(feature = "serde")]
+    if let Some(attrs) = &fields_attr {
+        impls.push(attrs.serde_default_fns());
     }
 
     #[cfg(feature = "bytemuck")]

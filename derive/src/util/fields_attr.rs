@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{ToTokens as _, quote};
 use syn::punctuated::Punctuated;
-use syn::{Expr, Meta, Token};
+use syn::spanned::Spanned;
+use syn::{Expr, Ident, Meta, Token};
 
 pub struct Enabled {
     /// Whether to parse the #[default] attribute.
@@ -21,6 +22,7 @@ pub struct FieldAttr {
     pub ty: syn::Type,
     pub default: Option<syn::Expr>,
     pub new_value: Option<Option<syn::Expr>>,
+    pub serde_default: Option<TokenStream2>,
 }
 
 impl FieldAttr {
@@ -30,6 +32,7 @@ impl FieldAttr {
             ty,
             default: None,
             new_value: None,
+            serde_default: None,
         }
     }
 
@@ -44,12 +47,17 @@ impl FieldAttr {
 }
 
 pub struct FieldsAttr {
+    pub ident: Ident,
     pub fields: Vec<FieldAttr>,
     pub fields_map: HashMap<String, FieldAttr>,
 }
 
 impl FieldsAttr {
-    pub fn parse(fields: &mut Punctuated<syn::Field, Token![,]>, enabled: &Enabled) -> Self {
+    pub fn parse(
+        ident: &Ident,
+        fields: &mut Punctuated<syn::Field, Token![,]>,
+        enabled: &Enabled,
+    ) -> Self {
         let mut default_fields = Vec::new();
 
         for field in fields {
@@ -109,8 +117,51 @@ impl FieldsAttr {
                     comment.push(format!("new: `` {} ``", quote! { #val }));
                 }
             }
+            if output.default.is_some() {
+                let mut default_fn = None;
+                for attr in std::mem::take(&mut field.attrs) {
+                    if !attr.path().is_ident("serde") {
+                        field.attrs.push(attr);
+                        continue;
+                    }
+                    let Meta::List(_) = attr.meta else {
+                        field.attrs.push(attr);
+                        continue;
+                    };
+                    let mut metas = Vec::new();
+                    let _ = attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("default") && meta.input.is_empty() {
+                            let fn_id = format!("{ident}::__data_classes__serde_default__{name}");
+                            let expr = syn::LitStr::new(&fn_id, meta.path.span());
+                            metas.push(quote! { default = #expr });
+                            let fn_name = format!("__data_classes__serde_default__{name}");
+                            let fn_name = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
+                            default_fn = Some(fn_name);
+                        } else {
+                            let mut ts = meta.path.get_ident().unwrap().into_token_stream();
+                            ts.extend(meta.input.parse::<TokenStream2>().unwrap());
+                            metas.push(ts);
+                        }
+                        Ok(())
+                    });
+                    let mut attr = attr;
+                    if let Meta::List(list) = &mut attr.meta {
+                        list.tokens = quote! { #( #metas ),* };
+                    };
+                    field.attrs.push(attr);
+                }
+                if let Some(fn_name) = default_fn {
+                    let ty = &output.ty;
+                    let default = output.default.as_ref().unwrap();
+                    output.serde_default = Some(quote! {
+                        fn #fn_name() -> #ty {
+                            #default
+                        }
+                    });
+                }
+            }
             default_fields.push(output);
-            if !comment.is_empty() {
+            if enabled.add_comment_on_changed && !comment.is_empty() {
                 if !doc.is_empty() {
                     doc.push(syn::parse_quote! { #[doc = ""] });
                     doc.push(syn::parse_quote! { #[doc = "---"] });
@@ -129,6 +180,7 @@ impl FieldsAttr {
         }
 
         FieldsAttr {
+            ident: ident.clone(),
             fields: default_fields,
             fields_map,
         }
@@ -140,5 +192,23 @@ impl FieldsAttr {
 
     pub fn entries(&self) -> Vec<TokenStream2> {
         self.fields.iter().map(|f| f.entry()).collect()
+    }
+
+    pub fn serde_default_fns(&self) -> TokenStream2 {
+        let ident = &self.ident;
+        let fns = self
+            .fields
+            .iter()
+            .filter_map(|f| f.serde_default.as_ref())
+            .collect::<Vec<_>>();
+        if fns.is_empty() {
+            quote! {}
+        } else {
+            quote! {
+                impl #ident {
+                    #(#fns)*
+                }
+            }
+        }
     }
 }

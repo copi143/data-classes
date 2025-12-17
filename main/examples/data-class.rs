@@ -21,12 +21,16 @@ struct Point {
 #[data(new, default, copy, display(comma), serde, rkyv(cmp), pod, zeroable)]
 struct Point3D {
     #[default = 1]
+    #[serde(default)]
     x: i32,
     #[default = 1]
+    #[serde(default)]
     y: i32,
     #[default = 1]
+    #[serde(default)]
     z: i32,
     #[new = _]
+    #[serde(skip)]
     _pad: i32,
 }
 

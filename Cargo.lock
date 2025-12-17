@@ -65,7 +65,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "data-classes"
-version = "0.0.0-5"
+version = "0.0.0-6"
 dependencies = [
  "bytemuck",
  "data-classes-derive",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "data-classes-derive"
-version = "0.0.0-5"
+version = "0.0.0-6"
 dependencies = [
  "proc-macro2",
  "quote",

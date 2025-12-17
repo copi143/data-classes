@@ -18,6 +18,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         add_comment_on_changed: true,
     };
     let fields_attr = FieldsAttr::parse(
+        ident,
         match &mut input.data {
             Data::Struct(DataStruct {
                 fields: Fields::Named(fields),

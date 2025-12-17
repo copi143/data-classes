@@ -10,7 +10,7 @@ pub enum Color {
     Blue,
 }
 
-#[data(new, serde, rkyv)]
+#[data(new, serde, rkyv(cmp, omit-bounds))]
 struct Point {
     x: i32,
     y: i32,

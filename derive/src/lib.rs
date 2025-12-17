@@ -7,6 +7,10 @@ mod r#impl {
     pub mod keyval;
 }
 
+mod util {
+    pub mod parse_attr_tree;
+}
+
 #[proc_macro]
 pub fn init_struct(item: TokenStream) -> TokenStream {
     r#impl::init_struct::main(item)

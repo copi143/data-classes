@@ -32,7 +32,7 @@ struct Point3D {
 
 /// aaa
 #[default]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[data(copy)]
 struct MyPoint {
     #[default = 1]
     x: i32,

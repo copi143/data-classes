@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DataStruct, DeriveInput, Fields, parse_macro_input};
 
-use crate::util::fields_attr::{EnabledAttrs, FieldsAttr};
+use crate::util::fields_attr::{Enabled, FieldsAttr};
 
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     if attr.to_string().trim() != "" {
@@ -12,9 +12,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as DeriveInput);
     let ident = &input.ident;
 
-    let enabled_attrs = &EnabledAttrs {
+    let enabled_attrs = &Enabled {
         default: true,
         new: false,
+        add_comment_on_changed: true,
     };
     let fields_attr = FieldsAttr::parse(
         match &mut input.data {

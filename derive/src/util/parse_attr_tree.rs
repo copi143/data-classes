@@ -64,6 +64,18 @@ pub struct AttrArgs {
     pub nodes: HashMap<String, AttrArgs>,
 }
 
+impl AttrArgs {
+    pub fn combine(&mut self, other: AttrArgs) {
+        for (key, val) in other.nodes {
+            if let Some(existing) = self.nodes.get_mut(&key) {
+                existing.combine(val);
+            } else {
+                self.nodes.insert(key, val);
+            }
+        }
+    }
+}
+
 impl Display for AttrArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[")?;
@@ -93,6 +105,9 @@ impl From<Nodes> for AttrArgs {
     fn from(nodes: Nodes) -> Self {
         let mut map = HashMap::new();
         for node in nodes.inner {
+            if map.contains_key(&node.name.inner) {
+                panic!("Duplicate attribute argument: {}", node.name.inner);
+            }
             map.insert(node.name.inner, AttrArgs::from(node.nodes));
         }
         AttrArgs { nodes: map }

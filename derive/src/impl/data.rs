@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{DeriveInput, parse_macro_input};
 
 use crate::util::{
-    fields_attr::{EnabledAttrs, FieldsAttr},
+    fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr},
     parse_attr_tree::AttrArgs,
 };
 
@@ -28,10 +28,27 @@ pub fn fields_list(input: DeriveInput) -> Option<Vec<syn::Ident>> {
 }
 
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut attr = parse_macro_input!(attr as AttrArgs);
-
     let mut input = parse_macro_input!(item as DeriveInput);
     let ident = &input.ident;
+
+    let mut attr = {
+        let mut attrs = Vec::new();
+        for attr in std::mem::take(&mut input.attrs) {
+            if attr.path().is_ident("data") {
+                let syn::Meta::List(attr) = attr.meta else {
+                    panic!("#[data(...)] attribute must be in list form");
+                };
+                attrs.push(attr.tokens.into());
+            } else {
+                input.attrs.push(attr);
+            }
+        }
+        let mut args = parse_macro_input!(attr as AttrArgs);
+        for attr in attrs {
+            args.combine(parse_macro_input!(attr as AttrArgs));
+        }
+        args
+    };
 
     let mut reprs = Vec::new();
     let mut derives = Vec::new();
@@ -90,9 +107,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     repr_with_no_args!("i64", quote! { i64 });
     repr_with_no_args!("isize", quote! { isize });
 
-    let enabled_attr = &EnabledAttrs {
+    let enabled_attr = &FieldsAttrEnabledFeatures {
         default: attr.get("default").is_some(),
         new: attr.get("new").is_some(),
+        add_comment_on_changed: true,
     };
     let fields_attr = match &mut input.data {
         syn::Data::Struct(syn::DataStruct {

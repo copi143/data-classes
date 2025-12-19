@@ -1,6 +1,6 @@
 [package]
 name = "data-classes"
-version = "0.0.0-6"
+version = "0.0.0-7"
 edition = "2024"
 authors = ["copi143 <copi143@outlook.com>"]
 license = "MIT OR Apache-2.0"
@@ -10,14 +10,14 @@ repository = "https://github.com/copi143/data-classes"
 readme = "README.md"
 
 [features]
-default = ["full"]
+default = []
 full = ["rkyv", "serde", "bytemuck"]
 rkyv = ["data-classes-derive/rkyv", "dep:rkyv"]
 serde = ["data-classes-derive/serde", "dep:serde"]
 bytemuck = ["data-classes-derive/bytemuck", "dep:bytemuck"]
 
 [dependencies]
-data-classes-derive = { version = "=0.0.0-6", path = "../derive" }
+data-classes-derive = { version = "=0.0.0-7", path = "../derive" }
 rkyv = { version = "0.8.12", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 bytemuck = { version = "1.24.0", features = ["derive"], optional = true }

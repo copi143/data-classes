@@ -1,2 +1,2 @@
 [workspace]
-members = ["derive", "main"]
+members = ["derive", "main", "test"]

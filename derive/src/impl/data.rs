@@ -89,7 +89,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
     }
 
+    #[allow(unused_variables)]
     let repr_c = attr.get("raw").is_some();
+    #[allow(unused_variables)]
     let repr_transparent = attr.get("transparent").is_some();
 
     repr_with_no_args!("raw", quote! { C });

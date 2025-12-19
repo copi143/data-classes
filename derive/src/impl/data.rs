@@ -174,6 +174,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         handle_wildcard!("to-*", "to-prev");
         handle_wildcard!("to-*", "to-next");
+        #[cfg(feature = "rand")]
         handle_wildcard!("to-*", "to-random");
         if !args.is_empty() {
             panic!("#[data(to-prev)] does not accept any arguments");
@@ -194,6 +195,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
+    #[cfg(feature = "rand")]
     if let Some(args) = attr.remove("to-random") {
         derives.push(quote! { ::data_classes::ToRandom });
         if !args.is_empty() {
@@ -345,6 +347,17 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     if let Some(mut args) = attr.remove("new") {
+        let is_const_or_not = args.remove("const");
+        if let Some(ref is_const_or_not) = is_const_or_not
+            && !is_const_or_not.is_empty()
+        {
+            panic!("#[data(new(const))] does not accept any arguments");
+        }
+        let is_const_or_not = if is_const_or_not.is_some() {
+            quote! { const }
+        } else {
+            quote! {}
+        };
         if args.is_empty() {
             if let Some(attrs) = &fields_attr {
                 let mut field_names = Vec::new();
@@ -368,7 +381,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 impls.push(quote! {
                     impl #ident {
-                        pub fn new(#(#field_names: #field_types),*) -> Self {
+                        pub #is_const_or_not fn new(#(#field_names: #field_types),*) -> Self {
                             Self {
                                 #(#field_names),*,
                                 #(#default_entries),*
@@ -386,7 +399,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             impls.push(quote! {
                 impl #ident {
-                    pub fn new() -> Self {
+                    pub #is_const_or_not fn new() -> Self {
                         Self::default()
                     }
                 }

@@ -1,6 +1,6 @@
 [package]
 name = "data-classes-derive"
-version = "0.0.0-9"
+version = "0.0.0-10"
 edition = "2024"
 authors = ["copi143 <copi143@outlook.com>"]
 license = "MIT OR Apache-2.0"
@@ -13,8 +13,9 @@ readme = "README.md"
 proc-macro = true
 
 [features]
-default = []
-full = ["rkyv", "serde", "bytemuck"]
+default = ["rand"]
+full = ["rand", "rkyv", "serde", "bytemuck"]
+rand = []
 rkyv = []
 serde = []
 bytemuck = []

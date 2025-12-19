@@ -10,6 +10,45 @@ pub enum Color {
     Blue,
 }
 
+// #[data(new, default, serde, rkyv(cmp), pod)]
+// pub struct Color1 {
+//     r: u8,
+//     g: u8,
+//     b: u8,
+// }
+
+#[repr(C)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    serde::Serialize,
+    serde::Deserialize,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+    Copy,
+)]
+#[rkyv(derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash,))]
+#[rkyv(compare(PartialEq, PartialOrd))]
+pub struct Color1 {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+impl Color1 {
+    pub fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+}
+
 // If we derive Pod, Zeroable and Copy will be automatically added.
 #[data(new, default, display(comma), serde, rkyv(cmp), pod)]
 struct Point {

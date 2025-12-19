@@ -60,6 +60,7 @@ impl Parse for Nodes {
     }
 }
 
+#[derive(Default)]
 pub struct AttrArgs {
     pub nodes: HashMap<String, AttrArgs>,
 }

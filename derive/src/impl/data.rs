@@ -155,6 +155,52 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
+    if let Some(args) = attr.remove("to-*") {
+        macro_rules! handle_wildcard {
+            ($wildcard:expr, $name:expr) => {
+                if attr
+                    .insert($name.to_string(), AttrArgs::default())
+                    .is_some()
+                {
+                    panic!(concat!(
+                        "#[data(",
+                        $name,
+                        ")] is duplicate when using #[data(",
+                        $wildcard,
+                        ")]",
+                    ));
+                }
+            };
+        }
+        handle_wildcard!("to-*", "to-prev");
+        handle_wildcard!("to-*", "to-next");
+        handle_wildcard!("to-*", "to-random");
+        if !args.is_empty() {
+            panic!("#[data(to-prev)] does not accept any arguments");
+        }
+    }
+
+    if let Some(args) = attr.remove("to-prev") {
+        derives.push(quote! { ::data_classes::ToPrev });
+        if !args.is_empty() {
+            panic!("#[data(to-prev)] does not accept any arguments");
+        }
+    }
+
+    if let Some(args) = attr.remove("to-next") {
+        derives.push(quote! { ::data_classes::ToNext });
+        if !args.is_empty() {
+            panic!("#[data(to-next)] does not accept any arguments");
+        }
+    }
+
+    if let Some(args) = attr.remove("to-random") {
+        derives.push(quote! { ::data_classes::ToRandom });
+        if !args.is_empty() {
+            panic!("#[data(to-random)] does not accept any arguments");
+        }
+    }
+
     #[cfg(not(feature = "rkyv"))]
     let mut rkyv: Option<AttrArgs> = None;
     #[cfg(feature = "rkyv")]

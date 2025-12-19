@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 mod r#impl {
     pub mod data;
     pub mod default;
+    pub mod derive;
     pub mod init_struct;
     pub mod keyval;
 }
@@ -35,4 +36,20 @@ pub fn val(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn default(attr: TokenStream, item: TokenStream) -> TokenStream {
     r#impl::default::main(attr, item)
+}
+
+#[proc_macro_derive(ToPrev)]
+pub fn derive_to_prev(item: TokenStream) -> TokenStream {
+    r#impl::derive::to_prev(item)
+}
+
+#[proc_macro_derive(ToNext)]
+pub fn derive_to_next(item: TokenStream) -> TokenStream {
+    r#impl::derive::to_next(item)
+}
+
+#[cfg(feature = "rand")]
+#[proc_macro_derive(ToRandom)]
+pub fn derive_to_random(item: TokenStream) -> TokenStream {
+    r#impl::derive::to_random(item)
 }

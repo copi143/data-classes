@@ -93,6 +93,8 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let repr_c = attr.get("raw").is_some();
     #[allow(unused_variables)]
     let repr_transparent = attr.get("transparent").is_some();
+    #[allow(unused_variables)]
+    let derive_copy = attr.get("copy").is_some();
 
     repr_with_no_args!("raw", quote! { C });
     repr_with_no_args!("packed", quote! { packed });
@@ -181,8 +183,17 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     #[cfg(feature = "bytemuck")]
     if let Some(args) = attr.remove("pod") {
         derives.push(quote! { ::bytemuck::Pod });
+        // Bytemuck requires repr(C) or repr(transparent) for Pod types
+        // and we add repr(C) automatically if neither is specified.
         if !repr_c && !repr_transparent {
             reprs.push(quote! { C });
+        }
+        // Bytemuck also requires Zeroable for Pod types
+        let _ = attr.remove("zeroable");
+        derives.push(quote! { ::bytemuck::Zeroable });
+        // And Copy should also be derived
+        if !derive_copy {
+            derives.push(quote! { ::core::marker::Copy });
         }
         if !args.is_empty() {
             panic!("#[data(pod)] does not accept any arguments");

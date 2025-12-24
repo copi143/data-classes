@@ -10,7 +10,7 @@ pub enum Color {
     Blue,
 }
 
-#[data(new, default, serde, rkyv(cmp), pod)]
+#[data(new, default, serde, rkyv, pod)]
 pub struct Color1 {
     r: u8,
     g: u8,
@@ -18,7 +18,7 @@ pub struct Color1 {
 }
 
 // If we derive Pod, Zeroable and Copy will be automatically added.
-#[data(new, default, display(comma), serde, rkyv(cmp), pod)]
+#[data(new, default, display(comma), serde, rkyv, pod)]
 struct Point {
     #[default = 1]
     x: i32,
@@ -27,7 +27,7 @@ struct Point {
 }
 
 // If we derive Pod, Zeroable and Copy will be automatically added.
-#[data(new, default, display(comma), serde, rkyv(cmp), pod)]
+#[data(new, default, display(comma), serde, rkyv, pod)]
 struct Point3D {
     #[default = 1]
     #[serde(default)]

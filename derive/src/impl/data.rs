@@ -400,13 +400,15 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         quote! {}
     };
 
-    let rkyv_compares = if rkyv.is_some()
-        && let Some(args) = rkyv.as_mut().unwrap().remove("cmp")
-    {
-        if !args.is_empty() {
-            panic!("#[data(rkyv(cmp))] does not accept any arguments");
+    let rkyv_compares = if let Some(rkyv) = &mut rkyv {
+        if let Some(args) = rkyv.remove("no-cmp") {
+            if !args.is_empty() {
+                panic!("#[data(rkyv(no-cmp))] does not accept any arguments");
+            }
+            quote! {}
+        } else {
+            quote! { #[rkyv(compare(PartialEq, PartialOrd))] }
         }
-        quote! { #[rkyv(compare(PartialEq, PartialOrd))] }
     } else {
         quote! {}
     };

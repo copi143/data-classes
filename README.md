@@ -30,7 +30,7 @@ You can combine multiple options inside the `#[data(...)]` attribute. Examples o
 - `default` — derive or implement `Default` (field-level defaults may produce a custom `Default`).
 - `copy` — derive `Copy`.
 - `serde` — (requires `serde` feature) derive `Serialize` and `Deserialize`.
-- `rkyv(...)` — (requires `rkyv` feature) enables `rkyv` derives and accepts sub-options like `cmp` and `omit-bounds`.
+- `rkyv(...)` — (requires `rkyv` feature) enables `rkyv` derives and accepts sub-options like `no-cmp` and `omit-bounds`.
 - `pod`, `zeroable` — (require `bytemuck` feature) derive `bytemuck::Pod` / `bytemuck::Zeroable` and may adjust `repr` as needed.
 - `display(debug)` — implement `Display` by formatting with `{:?}`.
 - `display(comma|semicolon|space)` — implement `Display` by joining struct fields with `,`, `;`, or space respectively.

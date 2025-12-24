@@ -10,43 +10,11 @@ pub enum Color {
     Blue,
 }
 
-// #[data(new, default, serde, rkyv(cmp), pod)]
-// pub struct Color1 {
-//     r: u8,
-//     g: u8,
-//     b: u8,
-// }
-
-#[repr(C)]
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Default,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
-    serde::Serialize,
-    serde::Deserialize,
-    bytemuck::Pod,
-    bytemuck::Zeroable,
-    Copy,
-)]
-#[rkyv(derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash,))]
-#[rkyv(compare(PartialEq, PartialOrd))]
+#[data(new, default, serde, rkyv(cmp), pod)]
 pub struct Color1 {
     r: u8,
     g: u8,
     b: u8,
-}
-impl Color1 {
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
-    }
 }
 
 // If we derive Pod, Zeroable and Copy will be automatically added.
@@ -85,21 +53,27 @@ struct MyPoint {
     y: i32,
 }
 
-fn main() {
-    let mut a: BTreeMap<MyPoint, i32> = BTreeMap::new();
-    a.insert(MyPoint { x: 1, y: 2 }, 10);
-    let p1 = Point { x: 10, y: 20 };
-    let p2 = Point { x: 10, y: 20 };
-    let p3 = Point { x: 15, y: 25 };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Test equality
-    assert!(p1 == p2);
-    assert!(p1 != p3);
+    #[test]
+    fn test_color() {
+        let r = Color::Red;
+        let g = Color::Green;
+        let b = Color::Blue;
+        assert!(r != g);
+        assert!(g != b);
+        assert!(b != r);
+    }
 
-    // Test cloning
-    let p4 = p1.clone();
-    assert!(p1 == p4);
-
-    // Test debug representation
-    println!("{:?}", p1);
+    #[test]
+    fn test_point() {
+        let p = Point::default();
+        assert_eq!(p.x, 1);
+        assert_eq!(p.y, 1);
+        let p = Point::new(3, 4);
+        assert_eq!(p.x, 3);
+        assert_eq!(p.y, 4);
+    }
 }

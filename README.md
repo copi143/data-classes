@@ -70,7 +70,7 @@ For example:
 
 ```rust
 #[data(new, default, serde, rkyv(cmp), pod)]
-pub struct Color1 {
+pub struct Color {
     r: u8,
     g: u8,
     b: u8,

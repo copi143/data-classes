@@ -1,15 +1,15 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Ident, ItemEnum, parse_macro_input};
+use syn::{Ident, ItemEnum};
 
 /// 为 enum 自动实现 prev/next 方法
-pub fn to_prev(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemEnum);
+pub fn to_prev(item: TokenStream) -> Result<TokenStream, TokenStream> {
+    let input = parse_macro_input!(item as ItemEnum)?;
     let enum_name = &input.ident;
     let variants: Vec<&Ident> = input.variants.iter().map(|v| &v.ident).collect();
     let len = variants.len();
     if len == 0 {
-        return TokenStream::new();
+        return Ok(TokenStream::new());
     }
     let mut match_arms = Vec::new();
     for (i, ident) in variants.iter().enumerate() {
@@ -29,16 +29,16 @@ pub fn to_prev(item: TokenStream) -> TokenStream {
             }
         }
     };
-    TokenStream::from(expanded)
+    Ok(TokenStream::from(expanded))
 }
 
-pub fn to_next(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemEnum);
+pub fn to_next(item: TokenStream) -> Result<TokenStream, TokenStream> {
+    let input = parse_macro_input!(item as ItemEnum)?;
     let enum_name = &input.ident;
     let variants: Vec<&Ident> = input.variants.iter().map(|v| &v.ident).collect();
     let len = variants.len();
     if len == 0 {
-        return TokenStream::new();
+        return Ok(TokenStream::new());
     }
     let mut match_arms = Vec::new();
     for (i, ident) in variants.iter().enumerate() {
@@ -58,17 +58,17 @@ pub fn to_next(item: TokenStream) -> TokenStream {
             }
         }
     };
-    TokenStream::from(expanded)
+    Ok(TokenStream::from(expanded))
 }
 
 #[cfg(feature = "rand")]
-pub fn to_random(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemEnum);
+pub fn to_random(item: TokenStream) -> Result<TokenStream, TokenStream> {
+    let input = parse_macro_input!(item as ItemEnum)?;
     let enum_name = &input.ident;
     let variants: Vec<&Ident> = input.variants.iter().map(|v| &v.ident).collect();
     let len = variants.len();
     if len == 0 {
-        return TokenStream::new();
+        return Ok(TokenStream::new());
     }
     let variants = variants.iter().map(|v| quote! { #enum_name::#v });
     let expanded = quote! {
@@ -82,5 +82,5 @@ pub fn to_random(item: TokenStream) -> TokenStream {
             }
         }
     };
-    TokenStream::from(expanded)
+    Ok(TokenStream::from(expanded))
 }

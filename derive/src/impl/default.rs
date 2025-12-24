@@ -1,15 +1,15 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DataStruct, DeriveInput, Fields, parse_macro_input};
+use syn::{Data, DataStruct, DeriveInput, Fields};
 
 use crate::util::fields_attr::{Enabled, FieldsAttr};
 
-pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStream> {
     if attr.to_string().trim() != "" {
         panic!("#[default] does not accept any arguments");
     }
 
-    let mut input = parse_macro_input!(item as DeriveInput);
+    let mut input = parse_macro_input!(item as DeriveInput)?;
     let ident = &input.ident;
 
     let enabled_attrs = &Enabled {
@@ -49,5 +49,5 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    Ok(TokenStream::from(expanded))
 }

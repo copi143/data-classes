@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{DeriveInput, parse_macro_input};
+use syn::DeriveInput;
 
 use crate::util::{
     fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr},
@@ -27,28 +28,30 @@ pub fn fields_list(input: DeriveInput) -> Option<Vec<syn::Ident>> {
     }
 }
 
-pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut input = parse_macro_input!(item as DeriveInput);
+fn parse_all_attr_args(attr: TokenStream, mut input: DeriveInput) -> Result<AttrArgs, TokenStream> {
+    let mut attrs = Vec::new();
+    for attr in std::mem::take(&mut input.attrs) {
+        if attr.path().is_ident("data") {
+            let syn::Meta::List(attr) = attr.meta else {
+                panic!("#[data(...)] attribute must be in list form");
+            };
+            attrs.push(attr.tokens.into());
+        } else {
+            input.attrs.push(attr);
+        }
+    }
+    let mut args = parse_macro_input!(attr as AttrArgs)?;
+    for attr in attrs {
+        args.combine(parse_macro_input!(attr as AttrArgs)?);
+    }
+    Ok(args)
+}
+
+pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStream> {
+    let mut input = parse_macro_input!(item as DeriveInput)?;
     let ident = &input.ident;
 
-    let mut attr = {
-        let mut attrs = Vec::new();
-        for attr in std::mem::take(&mut input.attrs) {
-            if attr.path().is_ident("data") {
-                let syn::Meta::List(attr) = attr.meta else {
-                    panic!("#[data(...)] attribute must be in list form");
-                };
-                attrs.push(attr.tokens.into());
-            } else {
-                input.attrs.push(attr);
-            }
-        }
-        let mut args = parse_macro_input!(attr as AttrArgs);
-        for attr in attrs {
-            args.combine(parse_macro_input!(attr as AttrArgs));
-        }
-        args
-    };
+    let mut attr = parse_all_attr_args(attr, input.clone())?;
 
     let mut reprs = Vec::new();
     let mut derives = Vec::new();
@@ -181,27 +184,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    if let Some(args) = attr.remove("to-prev") {
-        derives.push(quote! { ::data_classes::ToPrev });
-        if !args.is_empty() {
-            panic!("#[data(to-prev)] does not accept any arguments");
-        }
-    }
-
-    if let Some(args) = attr.remove("to-next") {
-        derives.push(quote! { ::data_classes::ToNext });
-        if !args.is_empty() {
-            panic!("#[data(to-next)] does not accept any arguments");
-        }
-    }
-
-    #[cfg(feature = "rand")]
-    if let Some(args) = attr.remove("to-random") {
-        derives.push(quote! { ::data_classes::ToRandom });
-        if !args.is_empty() {
-            panic!("#[data(to-random)] does not accept any arguments");
-        }
-    }
+    data_to_xxx(&mut derives, &mut attr);
 
     #[cfg(not(feature = "rkyv"))]
     let mut rkyv: Option<AttrArgs> = None;
@@ -216,13 +199,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     #[cfg(feature = "serde")]
-    if let Some(args) = attr.remove("serde") {
-        derives.push(quote! { ::serde::Serialize });
-        derives.push(quote! { ::serde::Deserialize });
-        if !args.is_empty() {
-            panic!("#[data(serde)] does not accept any arguments");
-        }
-    }
+    data_serde(&mut derives, &mut attr);
     #[cfg(feature = "serde")]
     if let Some(attrs) = &fields_attr {
         impls.push(attrs.serde_default_fns());
@@ -465,5 +442,79 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
         #(#impls)*
     };
 
-    expanded.into()
+    Ok(TokenStream::from(expanded))
+}
+
+fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
+    if let Some(mut args) = attr.remove("serde") {
+        if args.is_empty() {
+            derives.push(quote! { ::serde::Serialize });
+            derives.push(quote! { ::serde::Deserialize });
+        }
+        if let Some(args) = args.remove("s") {
+            derives.push(quote! { ::serde::Serialize });
+            if !args.is_empty() {
+                panic!("#[data(serde(s))] does not accept any arguments");
+            }
+        }
+        if let Some(args) = args.remove("d") {
+            derives.push(quote! { ::serde::Deserialize });
+            if !args.is_empty() {
+                panic!("#[data(serde(d))] does not accept any arguments");
+            }
+        }
+        if !args.is_empty() {
+            panic!("#[data(serde)] has unsupported arguments: {args}");
+        }
+    }
+}
+
+fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
+    if let Some(args) = attr.remove("to-*") {
+        macro_rules! handle_wildcard {
+            ($wildcard:expr, $name:expr) => {
+                if attr
+                    .insert($name.to_string(), AttrArgs::default())
+                    .is_some()
+                {
+                    panic!(concat!(
+                        "#[data(",
+                        $name,
+                        ")] is duplicate when using #[data(",
+                        $wildcard,
+                        ")]",
+                    ));
+                }
+            };
+        }
+        handle_wildcard!("to-*", "to-prev");
+        handle_wildcard!("to-*", "to-next");
+        #[cfg(feature = "rand")]
+        handle_wildcard!("to-*", "to-random");
+        if !args.is_empty() {
+            panic!("#[data(to-prev)] does not accept any arguments");
+        }
+    }
+
+    if let Some(args) = attr.remove("to-prev") {
+        derives.push(quote! { ::data_classes::ToPrev });
+        if !args.is_empty() {
+            panic!("#[data(to-prev)] does not accept any arguments");
+        }
+    }
+
+    if let Some(args) = attr.remove("to-next") {
+        derives.push(quote! { ::data_classes::ToNext });
+        if !args.is_empty() {
+            panic!("#[data(to-next)] does not accept any arguments");
+        }
+    }
+
+    #[cfg(feature = "rand")]
+    if let Some(args) = attr.remove("to-random") {
+        derives.push(quote! { ::data_classes::ToRandom });
+        if !args.is_empty() {
+            panic!("#[data(to-random)] does not accept any arguments");
+        }
+    }
 }

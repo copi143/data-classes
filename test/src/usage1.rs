@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-
-use data_classes::*;
+use data_classes::derive::*;
 
 #[data]
 pub enum Color {

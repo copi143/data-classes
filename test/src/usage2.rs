@@ -1,4 +1,4 @@
-use data_classes::init_struct;
+use data_classes::{deps::*, derive::*};
 
 init_struct! {
     pub struct Foo {

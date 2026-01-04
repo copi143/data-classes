@@ -117,7 +117,7 @@ impl FieldsAttr {
                     comment.push(format!("new: `` {} ``", quote! { #val }));
                 }
             }
-            if output.default.is_some() {
+            if let Some(ref default) = output.default {
                 let mut default_fn = None;
                 for attr in std::mem::take(&mut field.attrs) {
                     if !attr.path().is_ident("serde") {
@@ -152,7 +152,6 @@ impl FieldsAttr {
                 }
                 if let Some(fn_name) = default_fn {
                     let ty = &output.ty;
-                    let default = output.default.as_ref().unwrap();
                     output.serde_default = Some(quote! {
                         fn #fn_name() -> #ty {
                             #default

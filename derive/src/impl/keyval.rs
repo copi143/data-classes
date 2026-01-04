@@ -37,15 +37,15 @@ pub fn val(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStr
     let derives = [
         quote! { ::core::fmt::Debug },
         #[cfg(feature = "rkyv")]
-        quote! { ::rkyv::Archive },
+        quote! { ::data_classes::deps::rkyv::Archive },
         #[cfg(feature = "rkyv")]
-        quote! { ::rkyv::Serialize },
+        quote! { ::data_classes::deps::rkyv::Serialize },
         #[cfg(feature = "rkyv")]
-        quote! { ::rkyv::Deserialize },
+        quote! { ::data_classes::deps::rkyv::Deserialize },
         #[cfg(feature = "serde")]
-        quote! { ::serde::Serialize },
+        quote! { ::data_classes::deps::serde::Serialize },
         #[cfg(feature = "serde")]
-        quote! { ::serde::Deserialize },
+        quote! { ::data_classes::deps::serde::Deserialize },
     ];
 
     let expanded = quote! {

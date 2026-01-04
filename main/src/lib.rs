@@ -1,4 +1,20 @@
-pub use data_classes_derive::*;
+pub mod derive {
+    pub use data_classes_derive::*;
+}
+
+pub mod deps {
+    #[cfg(feature = "rand")]
+    pub use rand;
+
+    #[cfg(feature = "serde")]
+    pub extern crate serde;
+
+    #[cfg(feature = "rkyv")]
+    pub use rkyv;
+
+    #[cfg(feature = "bytemuck")]
+    pub use bytemuck;
+}
 
 /// Trait for enums that can get the previous variant in a circular manner.
 pub trait ToPrev: Sized {

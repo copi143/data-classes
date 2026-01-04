@@ -1,4 +1,4 @@
-use data_classes::*;
+use data_classes::{deps::*, derive::*};
 
 #[derive(ToPrev, ToNext, ToRandom, PartialEq, Eq, Debug)]
 enum Direction {
@@ -19,6 +19,7 @@ enum Direction1 {
 #[cfg(test)]
 mod tests {
     use super::Direction;
+    use data_classes::deps::rand;
     use data_classes::{ToNext as _, ToPrev as _, ToRandom as _};
 
     #[test]

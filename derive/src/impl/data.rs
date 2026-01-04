@@ -193,9 +193,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
 
     #[cfg(feature = "rkyv")]
     if rkyv.is_some() {
-        derives.push(quote! { ::rkyv::Archive });
-        derives.push(quote! { ::rkyv::Serialize });
-        derives.push(quote! { ::rkyv::Deserialize });
+        derives.push(quote! { ::data_classes::deps::rkyv::Archive });
+        derives.push(quote! { ::data_classes::deps::rkyv::Serialize });
+        derives.push(quote! { ::data_classes::deps::rkyv::Deserialize });
     }
 
     #[cfg(feature = "serde")]
@@ -207,7 +207,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
 
     #[cfg(feature = "bytemuck")]
     if let Some(args) = attr.remove("pod") {
-        derives.push(quote! { ::bytemuck::Pod });
+        derives.push(quote! { ::data_classes::deps::bytemuck::Pod });
         // Bytemuck requires repr(C) or repr(transparent) for Pod types
         // and we add repr(C) automatically if neither is specified.
         if !repr_c && !repr_transparent {
@@ -215,7 +215,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         }
         // Bytemuck also requires Zeroable for Pod types
         let _ = attr.remove("zeroable");
-        derives.push(quote! { ::bytemuck::Zeroable });
+        derives.push(quote! { ::data_classes::deps::bytemuck::Zeroable });
         // And Copy should also be derived
         if !derive_copy {
             derives.push(quote! { ::core::marker::Copy });
@@ -227,7 +227,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
 
     #[cfg(feature = "bytemuck")]
     if let Some(args) = attr.remove("zeroable") {
-        derives.push(quote! { ::bytemuck::Zeroable });
+        derives.push(quote! { ::data_classes::deps::bytemuck::Zeroable });
         if !args.is_empty() {
             panic!("#[data(zeroable)] does not accept any arguments");
         }
@@ -450,17 +450,17 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
 fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
     if let Some(mut args) = attr.remove("serde") {
         if args.is_empty() {
-            derives.push(quote! { ::serde::Serialize });
-            derives.push(quote! { ::serde::Deserialize });
+            derives.push(quote! { ::data_classes::deps::serde::Serialize });
+            derives.push(quote! { ::data_classes::deps::serde::Deserialize });
         }
         if let Some(args) = args.remove("s") {
-            derives.push(quote! { ::serde::Serialize });
+            derives.push(quote! { ::data_classes::deps::serde::Serialize });
             if !args.is_empty() {
                 panic!("#[data(serde(s))] does not accept any arguments");
             }
         }
         if let Some(args) = args.remove("d") {
-            derives.push(quote! { ::serde::Deserialize });
+            derives.push(quote! { ::data_classes::deps::serde::Deserialize });
             if !args.is_empty() {
                 panic!("#[data(serde(d))] does not accept any arguments");
             }
@@ -499,14 +499,14 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
     }
 
     if let Some(args) = attr.remove("to-prev") {
-        derives.push(quote! { ::data_classes::ToPrev });
+        derives.push(quote! { ::data_classes::derive::ToPrev });
         if !args.is_empty() {
             panic!("#[data(to-prev)] does not accept any arguments");
         }
     }
 
     if let Some(args) = attr.remove("to-next") {
-        derives.push(quote! { ::data_classes::ToNext });
+        derives.push(quote! { ::data_classes::derive::ToNext });
         if !args.is_empty() {
             panic!("#[data(to-next)] does not accept any arguments");
         }
@@ -514,7 +514,7 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
 
     #[cfg(feature = "rand")]
     if let Some(args) = attr.remove("to-random") {
-        derives.push(quote! { ::data_classes::ToRandom });
+        derives.push(quote! { ::data_classes::derive::ToRandom });
         if !args.is_empty() {
             panic!("#[data(to-random)] does not accept any arguments");
         }

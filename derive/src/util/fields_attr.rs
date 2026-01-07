@@ -48,6 +48,7 @@ impl FieldAttr {
 
 pub struct FieldsAttr {
     pub ident: Ident,
+    pub generics: syn::Generics,
     pub fields: Vec<FieldAttr>,
     pub fields_map: HashMap<String, FieldAttr>,
 }
@@ -55,9 +56,10 @@ pub struct FieldsAttr {
 impl FieldsAttr {
     pub fn parse(
         ident: &Ident,
+        generics: &syn::Generics,
         fields: &mut Punctuated<syn::Field, Token![,]>,
         enabled: &Enabled,
-    ) -> Self {
+    ) -> Result<Self, syn::Error> {
         let mut default_fields = Vec::new();
 
         for field in fields {
@@ -78,14 +80,20 @@ impl FieldsAttr {
                     continue;
                 }
                 let Meta::NameValue(ref val) = attr.meta else {
-                    panic!(
-                        "The #[default] attribute must be in the form #[default = ...] for field {name}"
-                    );
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        format!(
+                            "The #[default] attribute must be in the form #[default = ...] for field {name}"
+                        ),
+                    ));
                 };
                 if output.default.replace(val.value.clone()).is_some() {
-                    panic!(
-                        "The #[default = ...] attribute for field {name} can only be specified once"
-                    );
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        format!(
+                            "The #[default = ...] attribute for field {name} can only be specified once"
+                        ),
+                    ));
                 }
                 let val = &val.value;
                 comment.push(format!("default: `` {} ``", quote! { #val }));
@@ -96,22 +104,31 @@ impl FieldsAttr {
                     continue;
                 }
                 let Meta::NameValue(ref val) = attr.meta else {
-                    panic!(
-                        "The #[new] attribute must be in the form #[new = ...] for field {name}"
-                    );
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        format!(
+                            "The #[new] attribute must be in the form #[new = ...] for field {name}"
+                        ),
+                    ));
                 };
                 if let Expr::Infer(_) = val.value {
                     if output.new_value.replace(None).is_some() {
-                        panic!(
-                            "The #[new = _] attribute for field {name} can only be specified once"
-                        );
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            format!(
+                                "The #[new = _] attribute for field {name} can only be specified once"
+                            ),
+                        ));
                     }
                     comment.push("new: *use default*".to_string());
                 } else {
                     if output.new_value.replace(Some(val.value.clone())).is_some() {
-                        panic!(
-                            "The #[new = ...] attribute for field {name} can only be specified once"
-                        );
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            format!(
+                                "The #[new = ...] attribute for field {name} can only be specified once"
+                            ),
+                        ));
                     }
                     let val = &val.value;
                     comment.push(format!("new: `` {} ``", quote! { #val }));
@@ -129,7 +146,7 @@ impl FieldsAttr {
                         continue;
                     };
                     let mut metas = Vec::new();
-                    let _ = attr.parse_nested_meta(|meta| {
+                    attr.parse_nested_meta(|meta| {
                         if meta.path.is_ident("default") && meta.input.is_empty() {
                             let fn_id = format!("{ident}::__data_classes__serde_default__{name}");
                             let expr = syn::LitStr::new(&fn_id, meta.path.span());
@@ -138,12 +155,15 @@ impl FieldsAttr {
                             let fn_name = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
                             default_fn = Some(fn_name);
                         } else {
-                            let mut ts = meta.path.get_ident().unwrap().into_token_stream();
-                            ts.extend(meta.input.parse::<TokenStream2>().unwrap());
+                            let Some(ident) = meta.path.get_ident() else {
+                                return Err(meta.error("Unsupported serde attribute"));
+                            };
+                            let mut ts = ident.into_token_stream();
+                            ts.extend(meta.input.parse::<TokenStream2>()?);
                             metas.push(ts);
                         }
                         Ok(())
-                    });
+                    })?;
                     let mut attr = attr;
                     if let Meta::List(list) = &mut attr.meta {
                         list.tokens = quote! { #( #metas ),* };
@@ -178,11 +198,12 @@ impl FieldsAttr {
             fields_map.insert(field.name.to_string(), field);
         }
 
-        FieldsAttr {
+        Ok(FieldsAttr {
             ident: ident.clone(),
+            generics: generics.clone(),
             fields: default_fields,
             fields_map,
-        }
+        })
     }
 
     pub fn default_not_modified(&self) -> bool {
@@ -195,6 +216,7 @@ impl FieldsAttr {
 
     pub fn serde_default_fns(&self) -> TokenStream2 {
         let ident = &self.ident;
+        let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
         let fns = self
             .fields
             .iter()
@@ -204,7 +226,7 @@ impl FieldsAttr {
             quote! {}
         } else {
             quote! {
-                impl #ident {
+                impl #impl_generics #ident #ty_generics #where_clause {
                     #(#fns)*
                 }
             }

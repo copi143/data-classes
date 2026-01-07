@@ -1,12 +1,19 @@
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
+use syn::spanned::Spanned;
 use syn::DeriveInput;
 
 use crate::util::{
     fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr},
     parse_attr_tree::AttrArgs,
 };
+
+fn error<T>(span: Span, msg: impl std::fmt::Display) -> Result<T, TokenStream> {
+    Err(TokenStream::from(
+        syn::Error::new(span, msg.to_string()).to_compile_error(),
+    ))
+}
 
 pub fn fields_list(input: DeriveInput) -> Option<Vec<syn::Ident>> {
     match &input.data {
@@ -33,7 +40,7 @@ fn parse_all_attr_args(attr: TokenStream, mut input: DeriveInput) -> Result<Attr
     for attr in std::mem::take(&mut input.attrs) {
         if attr.path().is_ident("data") {
             let syn::Meta::List(attr) = attr.meta else {
-                panic!("#[data(...)] attribute must be in list form");
+                return error(attr.span(), "#[data(...)] attribute must be in list form");
             };
             attrs.push(attr.tokens.into());
         } else {
@@ -50,6 +57,7 @@ fn parse_all_attr_args(attr: TokenStream, mut input: DeriveInput) -> Result<Attr
 pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStream> {
     let mut input = parse_macro_input!(item as DeriveInput)?;
     let ident = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     let mut attr = parse_all_attr_args(attr, input.clone())?;
 
@@ -82,11 +90,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             if let Some(args) = attr.remove($name) {
                 reprs.push($quote);
                 if !args.is_empty() {
-                    panic!(concat!(
-                        "#[data(",
-                        $name,
-                        ")] does not accept any arguments"
-                    ));
+                    return error(
+                        Span::call_site(),
+                        format!("#[data({})] does not accept any arguments", $name),
+                    );
                 }
             }
         };
@@ -123,7 +130,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(fields),
             ..
-        }) => Some(FieldsAttr::parse(ident, &mut fields.named, enabled_attr)),
+        }) => Some(
+            FieldsAttr::parse(ident, &input.generics, &mut fields.named, enabled_attr)
+                .map_err(|e| TokenStream::from(e.to_compile_error()))?,
+        ),
         _ => None,
     };
 
@@ -134,12 +144,12 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             } else {
                 let default_fields = attrs.entries();
                 impls.push(quote! {
-                    impl Default for #ident {
-                        fn default() -> Self {
-                            Self {
-                                #(#default_fields),*
-                            }
+                impl #impl_generics Default for #ident #ty_generics #where_clause {
+                    fn default() -> Self {
+                        Self {
+                            #(#default_fields),*
                         }
+                    }
                     }
                 });
             }
@@ -147,14 +157,14 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             derives.push(quote! { ::core::default::Default });
         }
         if !args.is_empty() {
-            panic!("#[data(default)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(default)] does not accept any arguments");
         }
     }
 
     if let Some(args) = attr.remove("copy") {
         derives.push(quote! { ::core::marker::Copy });
         if !args.is_empty() {
-            panic!("#[data(copy)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(copy)] does not accept any arguments");
         }
     }
 
@@ -165,13 +175,13 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                     .insert($name.to_string(), AttrArgs::default())
                     .is_some()
                 {
-                    panic!(concat!(
-                        "#[data(",
-                        $name,
-                        ")] is duplicate when using #[data(",
-                        $wildcard,
-                        ")]",
-                    ));
+                    return error(
+                        Span::call_site(),
+                        format!(
+                            "#[data({})] is duplicate when using #[data({})]",
+                            $name, $wildcard
+                        ),
+                    );
                 }
             };
         }
@@ -180,11 +190,11 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         #[cfg(feature = "rand")]
         handle_wildcard!("to-*", "to-random");
         if !args.is_empty() {
-            panic!("#[data(to-prev)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(to-prev)] does not accept any arguments");
         }
     }
 
-    data_to_xxx(&mut derives, &mut attr);
+    data_to_xxx(&mut derives, &mut attr)?;
 
     #[cfg(not(feature = "rkyv"))]
     let mut rkyv: Option<AttrArgs> = None;
@@ -199,7 +209,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     }
 
     #[cfg(feature = "serde")]
-    data_serde(&mut derives, &mut attr);
+    data_serde(&mut derives, &mut attr)?;
     #[cfg(feature = "serde")]
     if let Some(attrs) = &fields_attr {
         impls.push(attrs.serde_default_fns());
@@ -221,7 +231,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             derives.push(quote! { ::core::marker::Copy });
         }
         if !args.is_empty() {
-            panic!("#[data(pod)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(pod)] does not accept any arguments");
         }
     }
 
@@ -229,32 +239,38 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     if let Some(args) = attr.remove("zeroable") {
         derives.push(quote! { ::data_classes::deps::bytemuck::Zeroable });
         if !args.is_empty() {
-            panic!("#[data(zeroable)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(zeroable)] does not accept any arguments");
         }
     }
 
     if let Some(mut args) = attr.remove("display") {
         if args.is_empty() {
-            panic!("#[data(display)] requires arguments");
+            return error(Span::call_site(), "#[data(display)] requires arguments");
         }
         if let Some(args) = args.remove("debug") {
             impls.push(quote! {
-                impl ::core::fmt::Display for #ident {
+                impl #impl_generics ::core::fmt::Display for #ident #ty_generics #where_clause {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                         write!(f, "{:?}", self)
                     }
                 }
             });
             if !args.is_empty() {
-                panic!("#[data(display(debug))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(debug))] does not accept any arguments",
+                );
             }
         }
         if let Some(args) = args.remove("comma") {
             let Some(fields) = fields_list(input.clone()) else {
-                panic!("#[data(display(comma))] can only be applied to structs");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(comma))] can only be applied to structs",
+                );
             };
             impls.push(quote! {
-                impl ::core::fmt::Display for #ident {
+                impl #impl_generics ::core::fmt::Display for #ident #ty_generics #where_clause {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                         let mut first = true;
                         #({
@@ -269,15 +285,21 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 }
             });
             if !args.is_empty() {
-                panic!("#[data(display(comma))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(comma))] does not accept any arguments",
+                );
             }
         }
         if let Some(args) = args.remove("semicolon") {
             let Some(fields) = fields_list(input.clone()) else {
-                panic!("#[data(display(semicolon))] can only be applied to structs");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(semicolon))] can only be applied to structs",
+                );
             };
             impls.push(quote! {
-                impl ::core::fmt::Display for #ident {
+                impl #impl_generics ::core::fmt::Display for #ident #ty_generics #where_clause {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                         let mut first = true;
                         #({
@@ -292,15 +314,21 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 }
             });
             if !args.is_empty() {
-                panic!("#[data(display(semicolon))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(semicolon))] does not accept any arguments",
+                );
             }
         }
         if let Some(args) = args.remove("space") {
             let Some(fields) = fields_list(input.clone()) else {
-                panic!("#[data(display(space))] can only be applied to structs");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(space))] can only be applied to structs",
+                );
             };
             impls.push(quote! {
-                impl ::core::fmt::Display for #ident {
+                impl #impl_generics ::core::fmt::Display for #ident #ty_generics #where_clause {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                         let mut first = true;
                         #({
@@ -315,11 +343,17 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 }
             });
             if !args.is_empty() {
-                panic!("#[data(display(space))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(display(space))] does not accept any arguments",
+                );
             }
         }
         if !args.is_empty() {
-            panic!("Unsupported attribute for #[data(display)]: {args}");
+            return error(
+                Span::call_site(),
+                format!("Unsupported attribute for #[data(display)]: {args}"),
+            );
         }
     }
 
@@ -328,7 +362,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         if let Some(ref is_const_or_not) = is_const_or_not
             && !is_const_or_not.is_empty()
         {
-            panic!("#[data(new(const))] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(new(const))] does not accept any arguments",
+            );
         }
         let is_const_or_not = if is_const_or_not.is_some() {
             quote! { const }
@@ -357,7 +394,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                     }
                 }
                 impls.push(quote! {
-                    impl #ident {
+                    impl #impl_generics #ident #ty_generics #where_clause {
                         pub #is_const_or_not fn new(#(#field_names: #field_types),*) -> Self {
                             Self {
                                 #(#field_names),*,
@@ -367,7 +404,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                     }
                 });
             } else {
-                panic!("#[data(new)] can only be applied to structs with named fields");
+                return error(
+                    Span::call_site(),
+                    "#[data(new)] can only be applied to structs with named fields",
+                );
             }
         }
         if let Some(args) = args.remove("default") {
@@ -375,23 +415,32 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 derives.push(quote! { ::core::default::Default });
             }
             impls.push(quote! {
-                impl #ident {
+                impl #impl_generics #ident #ty_generics #where_clause {
                     pub #is_const_or_not fn new() -> Self {
                         Self::default()
                     }
                 }
             });
             if !args.is_empty() {
-                panic!("#[data(new(default))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(new(default))] does not accept any arguments",
+                );
             }
         }
         if !args.is_empty() {
-            panic!("Unsupported attribute for #[data(new)]: {args}");
+            return error(
+                Span::call_site(),
+                format!("Unsupported attribute for #[data(new)]: {args}"),
+            );
         }
     }
 
     if !attr.is_empty() {
-        panic!("Unsupported attribute for #[data]: {attr}");
+        return error(
+            Span::call_site(),
+            format!("Unsupported attribute for #[data]: {attr}"),
+        );
     }
 
     let rkyv_derives = if rkyv.is_some() {
@@ -403,7 +452,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     let rkyv_compares = if let Some(rkyv) = &mut rkyv {
         if let Some(args) = rkyv.remove("no-cmp") {
             if !args.is_empty() {
-                panic!("#[data(rkyv(no-cmp))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(rkyv(no-cmp))] does not accept any arguments",
+                );
             }
             quote! {}
         } else {
@@ -417,7 +469,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         && let Some(args) = rkyv.as_mut().unwrap().remove("omit-bounds")
     {
         if !args.is_empty() {
-            panic!("#[data(rkyv(omit-bounds))] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(rkyv(omit-bounds))] does not accept any arguments",
+            );
         }
         quote! {
             #[rkyv(serialize_bounds(__S: ::rkyv::ser::Writer + ::rkyv::ser::Allocator, __S::Error: ::rkyv::rancor::Source))]
@@ -431,7 +486,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     if let Some(rkyv) = rkyv
         && !rkyv.is_empty()
     {
-        panic!("Unsupported attribute for #[data(rkyv)]: {rkyv}");
+        return error(
+            Span::call_site(),
+            format!("Unsupported attribute for #[data(rkyv)]: {rkyv}"),
+        );
     }
 
     let expanded = quote! {
@@ -447,7 +505,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     Ok(TokenStream::from(expanded))
 }
 
-fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
+fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) -> Result<(), TokenStream> {
     if let Some(mut args) = attr.remove("serde") {
         if args.is_empty() {
             derives.push(quote! { ::data_classes::deps::serde::Serialize });
@@ -456,22 +514,32 @@ fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
         if let Some(args) = args.remove("s") {
             derives.push(quote! { ::data_classes::deps::serde::Serialize });
             if !args.is_empty() {
-                panic!("#[data(serde(s))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(serde(s))] does not accept any arguments",
+                );
             }
         }
         if let Some(args) = args.remove("d") {
             derives.push(quote! { ::data_classes::deps::serde::Deserialize });
             if !args.is_empty() {
-                panic!("#[data(serde(d))] does not accept any arguments");
+                return error(
+                    Span::call_site(),
+                    "#[data(serde(d))] does not accept any arguments",
+                );
             }
         }
         if !args.is_empty() {
-            panic!("#[data(serde)] has unsupported arguments: {args}");
+            return error(
+                Span::call_site(),
+                format!("#[data(serde)] has unsupported arguments: {args}"),
+            );
         }
     }
+    Ok(())
 }
 
-fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
+fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) -> Result<(), TokenStream> {
     if let Some(args) = attr.remove("to-*") {
         macro_rules! handle_wildcard {
             ($wildcard:expr, $name:expr) => {
@@ -479,13 +547,13 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
                     .insert($name.to_string(), AttrArgs::default())
                     .is_some()
                 {
-                    panic!(concat!(
-                        "#[data(",
-                        $name,
-                        ")] is duplicate when using #[data(",
-                        $wildcard,
-                        ")]",
-                    ));
+                    return error(
+                        Span::call_site(),
+                        format!(
+                            "#[data({})] is duplicate when using #[data({})]",
+                            $name, $wildcard
+                        ),
+                    );
                 }
             };
         }
@@ -494,21 +562,21 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
         #[cfg(feature = "rand")]
         handle_wildcard!("to-*", "to-random");
         if !args.is_empty() {
-            panic!("#[data(to-prev)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(to-prev)] does not accept any arguments");
         }
     }
 
     if let Some(args) = attr.remove("to-prev") {
         derives.push(quote! { ::data_classes::derive::ToPrev });
         if !args.is_empty() {
-            panic!("#[data(to-prev)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(to-prev)] does not accept any arguments");
         }
     }
 
     if let Some(args) = attr.remove("to-next") {
         derives.push(quote! { ::data_classes::derive::ToNext });
         if !args.is_empty() {
-            panic!("#[data(to-next)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(to-next)] does not accept any arguments");
         }
     }
 
@@ -516,7 +584,8 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) {
     if let Some(args) = attr.remove("to-random") {
         derives.push(quote! { ::data_classes::derive::ToRandom });
         if !args.is_empty() {
-            panic!("#[data(to-random)] does not accept any arguments");
+            return error(Span::call_site(), "#[data(to-random)] does not accept any arguments");
         }
     }
+    Ok(())
 }

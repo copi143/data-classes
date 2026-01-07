@@ -4,7 +4,13 @@ use syn::DeriveInput;
 
 pub fn key(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStream> {
     if attr.to_string().trim() != "" {
-        panic!("#[key] does not accept any arguments");
+        return Err(TokenStream::from(
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "#[key] does not accept any arguments",
+            )
+            .to_compile_error(),
+        ));
     }
 
     let input = parse_macro_input!(item as DeriveInput)?;
@@ -29,7 +35,13 @@ pub fn key(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStr
 
 pub fn val(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStream> {
     if attr.to_string().trim() != "" {
-        panic!("#[val] does not accept any arguments");
+        return Err(TokenStream::from(
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "#[val] does not accept any arguments",
+            )
+            .to_compile_error(),
+        ));
     }
 
     let input = parse_macro_input!(item as DeriveInput)?;

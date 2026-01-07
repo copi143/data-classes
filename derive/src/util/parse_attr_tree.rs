@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
+use proc_macro2::Span;
 use syn::{
     Token,
     parse::{Parse, ParseStream, Result},
@@ -9,11 +10,13 @@ use syn::{
 
 struct Name {
     inner: String,
+    span: Span,
 }
 
 impl Parse for Name {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut name = String::new();
+        let mut span = input.span();
         while !input.is_empty()
             && !input.peek(Token![,])
             && !input.peek(Token![;])
@@ -22,9 +25,10 @@ impl Parse for Name {
             && !input.peek(syn::token::Brace)
         {
             let tt: proc_macro2::TokenTree = input.parse()?;
+            span = tt.span();
             name.push_str(&tt.to_string());
         }
-        Ok(Name { inner: name })
+        Ok(Name { inner: name, span })
     }
 }
 
@@ -98,20 +102,25 @@ impl Display for AttrArgs {
 impl Parse for AttrArgs {
     fn parse(input: ParseStream) -> Result<Self> {
         let nodes: Nodes = input.parse()?;
-        Ok(AttrArgs::from(nodes))
+        AttrArgs::try_from(nodes)
     }
 }
 
-impl From<Nodes> for AttrArgs {
-    fn from(nodes: Nodes) -> Self {
+impl TryFrom<Nodes> for AttrArgs {
+    type Error = syn::Error;
+
+    fn try_from(nodes: Nodes) -> Result<Self> {
         let mut map = HashMap::new();
         for node in nodes.inner {
             if map.contains_key(&node.name.inner) {
-                panic!("Duplicate attribute argument: {}", node.name.inner);
+                return Err(syn::Error::new(
+                    node.name.span,
+                    format!("Duplicate attribute argument: {}", node.name.inner),
+                ));
             }
-            map.insert(node.name.inner, AttrArgs::from(node.nodes));
+            map.insert(node.name.inner, AttrArgs::try_from(node.nodes)?);
         }
-        AttrArgs { nodes: map }
+        Ok(AttrArgs { nodes: map })
     }
 }
 

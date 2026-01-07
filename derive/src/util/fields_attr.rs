@@ -15,6 +15,8 @@ pub struct Enabled {
     pub deref: bool,
     /// Whether to parse the #[get]/#[set]/#[with] attributes.
     pub accessors: bool,
+    /// Whether to parse the #[builder(...)] attribute.
+    pub builder: bool,
     /// Whether to parse the #[where] attribute.
     pub validate: bool,
     /// Add comments to fields whose default values ​​have been changed.<br />
@@ -34,6 +36,7 @@ pub struct FieldAttr {
     pub get_mut: bool,
     pub set: bool,
     pub with: bool,
+    pub builder_default: bool,
 }
 
 impl FieldAttr {
@@ -49,6 +52,7 @@ impl FieldAttr {
             get_mut: false,
             set: false,
             with: false,
+            builder_default: false,
         }
     }
 
@@ -350,6 +354,52 @@ impl FieldsAttr {
                     continue;
                 }
                 field.attrs.push(attr);
+            }
+            for attr in std::mem::take(&mut field.attrs) {
+                if !enabled.builder || !attr.path().is_ident("builder") {
+                    field.attrs.push(attr);
+                    continue;
+                }
+                match &attr.meta {
+                    Meta::List(_) => {
+                        let mut is_default = false;
+                        attr.parse_nested_meta(|meta| {
+                            if meta.path.is_ident("default") && meta.input.is_empty() {
+                                is_default = true;
+                                Ok(())
+                            } else {
+                                Err(meta.error("Unsupported #[builder(...)] argument"))
+                            }
+                        })?;
+                        if !is_default {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "The #[builder(...)] attribute only supports #[builder(default)]",
+                            ));
+                        }
+                        if output.builder_default {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                format!(
+                                    "The #[builder(default)] attribute for field {name} can only be specified once"
+                                ),
+                            ));
+                        }
+                        output.builder_default = true;
+                    }
+                    Meta::Path(_) => {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            "The #[builder] attribute must be in the form #[builder(default)]",
+                        ));
+                    }
+                    Meta::NameValue(_) => {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            "The #[builder] attribute does not accept name-value arguments",
+                        ));
+                    }
+                }
             }
             for attr in std::mem::take(&mut field.attrs) {
                 if !enabled.validate || !attr.path().is_ident("check") {

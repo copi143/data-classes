@@ -24,6 +24,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         new: false,
         deref: false,
         accessors: false,
+        builder: false,
         validate: false,
         add_comment_on_changed: true,
     };

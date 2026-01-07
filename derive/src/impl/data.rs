@@ -145,6 +145,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         new: attr.get("new").is_some(),
         deref: true,
         accessors: true,
+        builder: true,
         validate: true,
         add_comment_on_changed: true,
     };
@@ -164,6 +165,16 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 span,
                 "#[deref] can only be applied to structs with named fields",
             );
+        }
+    }
+    if attr.get("builder").is_none() {
+        if let Some(attrs) = &fields_attr {
+            if attrs.fields.iter().any(|f| f.builder_default) {
+                return error(
+                    Span::call_site(),
+                    "#[builder(default)] requires #[data(builder)]",
+                );
+            }
         }
     }
 
@@ -374,6 +385,113 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 pub fn validate(&self) -> bool {
                     #(#binds)*
                     #body
+                }
+            }
+        });
+    }
+
+    if let Some(args) = attr.remove("builder") {
+        if !args.is_empty() {
+            return error(Span::call_site(), "#[data(builder)] does not accept any arguments");
+        }
+        let Some(attrs) = &fields_attr else {
+            return error(
+                Span::call_site(),
+                "#[data(builder)] can only be applied to structs with named fields",
+            );
+        };
+        let builder_ident = syn::Ident::new(
+            &format!("{}Builder", ident),
+            proc_macro2::Span::call_site(),
+        );
+        let builder_generics = &input.generics;
+        let builder_fields = attrs.fields.iter().map(|f| {
+            let name = &f.name;
+            let ty = &f.ty;
+            if f.builder_default {
+                quote! { #name: #ty }
+            } else {
+                quote! { #name: ::core::option::Option<#ty> }
+            }
+        });
+        let builder_inits = attrs.fields.iter().map(|f| {
+            let name = &f.name;
+            if f.builder_default {
+                quote! { #name: ::core::default::Default::default() }
+            } else {
+                quote! { #name: ::core::option::Option::None }
+            }
+        });
+        let with_fns = attrs.fields.iter().map(|f| {
+            let name = &f.name;
+            let ty = &f.ty;
+            let with_name =
+                syn::Ident::new(&format!("with_{}", name), proc_macro2::Span::call_site());
+            let assign = if f.builder_default {
+                quote! { self.#name = value; }
+            } else {
+                quote! { self.#name = ::core::option::Option::Some(value); }
+            };
+            quote! {
+                pub fn #with_name(mut self, value: #ty) -> Self {
+                    #assign
+                    self
+                }
+            }
+        });
+        let build_fields = attrs.fields.iter().map(|f| {
+            let name = &f.name;
+            let ty = &f.ty;
+            let check = f.where_expr.as_ref().map(|expr| {
+                quote! {
+                    let #name = &value;
+                    if !(#expr) {
+                        panic!("check failed for field {}", stringify!(#name));
+                    }
+                }
+            });
+            if f.builder_default {
+                quote! {
+                    let value: #ty = self.#name;
+                    #check
+                    let #name = value;
+                }
+            } else {
+                quote! {
+                    let value: #ty = match self.#name {
+                        ::core::option::Option::Some(value) => value,
+                        ::core::option::Option::None => {
+                            panic!("missing field {}", stringify!(#name));
+                        }
+                    };
+                    #check
+                    let #name = value;
+                }
+            }
+        });
+        let build_init = attrs.fields.iter().map(|f| {
+            let name = &f.name;
+            quote! { #name }
+        });
+        impls.push(quote! {
+            pub struct #builder_ident #builder_generics {
+                #(#builder_fields),*
+            }
+
+            impl #impl_generics #builder_ident #ty_generics #where_clause {
+                #(#with_fns)*
+
+                pub fn build(self) -> #ident #ty_generics {
+                    #(#build_fields)*
+                    #ident { #(#build_init),* }
+                }
+            }
+
+            impl #impl_generics #ident #ty_generics #where_clause {
+                pub fn builder() -> #builder_ident #ty_generics {
+                    #builder_ident {
+                        #(#builder_inits),*
+                    }
                 }
             }
         });

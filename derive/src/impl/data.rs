@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::spanned::Spanned;
 use syn::DeriveInput;
+use syn::spanned::Spanned;
 
 use crate::util::{
     fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr},
@@ -52,6 +52,25 @@ fn parse_all_attr_args(attr: TokenStream, mut input: DeriveInput) -> Result<Attr
         args.combine(parse_macro_input!(attr as AttrArgs)?);
     }
     Ok(args)
+}
+
+fn find_deref_span(input: &DeriveInput) -> Option<Span> {
+    let syn::Data::Struct(data) = &input.data else {
+        return None;
+    };
+    let fields = match &data.fields {
+        syn::Fields::Named(fields) => &fields.named,
+        syn::Fields::Unnamed(fields) => &fields.unnamed,
+        syn::Fields::Unit => return None,
+    };
+    for field in fields {
+        for attr in &field.attrs {
+            if attr.path().is_ident("deref") {
+                return Some(attr.span());
+            }
+        }
+    }
+    None
 }
 
 pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenStream> {
@@ -124,6 +143,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     let enabled_attr = &FieldsAttrEnabledFeatures {
         default: attr.get("default").is_some(),
         new: attr.get("new").is_some(),
+        deref: true,
+        accessors: true,
+        validate: true,
         add_comment_on_changed: true,
     };
     let fields_attr = match &mut input.data {
@@ -136,6 +158,14 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         ),
         _ => None,
     };
+    if fields_attr.is_none() {
+        if let Some(span) = find_deref_span(&input) {
+            return error(
+                span,
+                "#[deref] can only be applied to structs with named fields",
+            );
+        }
+    }
 
     if let Some(args) = attr.remove("default") {
         if let Some(attrs) = &fields_attr {
@@ -157,14 +187,20 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             derives.push(quote! { ::core::default::Default });
         }
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(default)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(default)] does not accept any arguments",
+            );
         }
     }
 
     if let Some(args) = attr.remove("copy") {
         derives.push(quote! { ::core::marker::Copy });
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(copy)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(copy)] does not accept any arguments",
+            );
         }
     }
 
@@ -190,7 +226,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         #[cfg(feature = "rand")]
         handle_wildcard!("to-*", "to-random");
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(to-prev)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(to-prev)] does not accept any arguments",
+            );
         }
     }
 
@@ -215,6 +254,131 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         impls.push(attrs.serde_default_fns());
     }
 
+    if let Some(attrs) = &fields_attr {
+        if let Some((name, ty, is_mut)) = attrs.deref_target() {
+            impls.push(quote! {
+                impl #impl_generics ::core::ops::Deref for #ident #ty_generics #where_clause {
+                    type Target = #ty;
+                    fn deref(&self) -> &Self::Target {
+                        &self.#name
+                    }
+                }
+            });
+            if is_mut {
+                impls.push(quote! {
+                    impl #impl_generics ::core::ops::DerefMut for #ident #ty_generics #where_clause {
+                        fn deref_mut(&mut self) -> &mut Self::Target {
+                            &mut self.#name
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    if let Some(attrs) = &fields_attr {
+        for field in attrs.fields.iter() {
+            let name = &field.name;
+            let ty = &field.ty;
+            let get_name =
+                syn::Ident::new(&format!("get_{}", name), proc_macro2::Span::call_site());
+            let get_mut_name =
+                syn::Ident::new(&format!("get_{}_mut", name), proc_macro2::Span::call_site());
+            let set_name =
+                syn::Ident::new(&format!("set_{}", name), proc_macro2::Span::call_site());
+            let with_name =
+                syn::Ident::new(&format!("with_{}", name), proc_macro2::Span::call_site());
+            if field.get {
+                impls.push(quote! {
+                    impl #impl_generics #ident #ty_generics #where_clause {
+                        pub fn #get_name(&self) -> &#ty {
+                            &self.#name
+                        }
+                    }
+                });
+            }
+            if field.get_mut {
+                impls.push(quote! {
+                    impl #impl_generics #ident #ty_generics #where_clause {
+                        pub fn #get_mut_name(&mut self) -> &mut #ty {
+                            &mut self.#name
+                        }
+                    }
+                });
+            }
+            if field.set {
+                let check = field.where_expr.as_ref().map(|expr| {
+                    quote! {
+                        let #name = &value;
+                        if !(#expr) {
+                            panic!("check failed for field {}", stringify!(#name));
+                        }
+                    }
+                });
+                impls.push(quote! {
+                    impl #impl_generics #ident #ty_generics #where_clause {
+                        pub fn #set_name(&mut self, value: #ty) {
+                            #check
+                            self.#name = value;
+                        }
+                    }
+                });
+            }
+            if field.with {
+                let check = field.where_expr.as_ref().map(|expr| {
+                    quote! {
+                        let #name = &value;
+                        if !(#expr) {
+                            panic!("check failed for field {}", stringify!(#name));
+                        }
+                    }
+                });
+                impls.push(quote! {
+                    impl #impl_generics #ident #ty_generics #where_clause {
+                        pub fn #with_name(mut self, value: #ty) -> Self {
+                            #check
+                            self.#name = value;
+                            self
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    if let Some(args) = attr.remove("validate") {
+        if !args.is_empty() {
+            return error(
+                Span::call_site(),
+                "#[data(validate)] does not accept any arguments",
+            );
+        }
+        let Some(attrs) = &fields_attr else {
+            return error(
+                Span::call_site(),
+                "#[data(validate)] can only be applied to structs with named fields",
+            );
+        };
+        let checks = attrs.validate_entries();
+        let binds = checks
+            .iter()
+            .map(|(name, _)| quote! { let #name = &self.#name; });
+        let exprs = checks.iter().map(|(_, expr)| quote! { (#expr) });
+        let body = if checks.is_empty() {
+            quote! { true }
+        } else {
+            quote! { true #(&& #exprs)* }
+        };
+        impls.push(quote! {
+            impl #impl_generics #ident #ty_generics #where_clause {
+                pub fn validate(&self) -> bool {
+                    #(#binds)*
+                    #body
+                }
+            }
+        });
+    }
+
     #[cfg(feature = "bytemuck")]
     if let Some(args) = attr.remove("pod") {
         derives.push(quote! { ::data_classes::deps::bytemuck::Pod });
@@ -231,7 +395,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             derives.push(quote! { ::core::marker::Copy });
         }
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(pod)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(pod)] does not accept any arguments",
+            );
         }
     }
 
@@ -239,7 +406,10 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     if let Some(args) = attr.remove("zeroable") {
         derives.push(quote! { ::data_classes::deps::bytemuck::Zeroable });
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(zeroable)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(zeroable)] does not accept any arguments",
+            );
         }
     }
 
@@ -562,21 +732,30 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) -> Result<(
         #[cfg(feature = "rand")]
         handle_wildcard!("to-*", "to-random");
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(to-prev)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(to-prev)] does not accept any arguments",
+            );
         }
     }
 
     if let Some(args) = attr.remove("to-prev") {
         derives.push(quote! { ::data_classes::derive::ToPrev });
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(to-prev)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(to-prev)] does not accept any arguments",
+            );
         }
     }
 
     if let Some(args) = attr.remove("to-next") {
         derives.push(quote! { ::data_classes::derive::ToNext });
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(to-next)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(to-next)] does not accept any arguments",
+            );
         }
     }
 
@@ -584,7 +763,10 @@ fn data_to_xxx(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) -> Result<(
     if let Some(args) = attr.remove("to-random") {
         derives.push(quote! { ::data_classes::derive::ToRandom });
         if !args.is_empty() {
-            return error(Span::call_site(), "#[data(to-random)] does not accept any arguments");
+            return error(
+                Span::call_site(),
+                "#[data(to-random)] does not accept any arguments",
+            );
         }
     }
     Ok(())

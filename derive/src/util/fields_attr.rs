@@ -11,6 +11,12 @@ pub struct Enabled {
     pub default: bool,
     /// Whether to parse the #[new] attribute.
     pub new: bool,
+    /// Whether to parse the #[deref] attribute.
+    pub deref: bool,
+    /// Whether to parse the #[get]/#[set]/#[with] attributes.
+    pub accessors: bool,
+    /// Whether to parse the #[where] attribute.
+    pub validate: bool,
     /// Add comments to fields whose default values ​​have been changed.<br />
     /// Add comments to fields whose new values ​​have been specified.<br />
     pub add_comment_on_changed: bool,
@@ -23,6 +29,11 @@ pub struct FieldAttr {
     pub default: Option<syn::Expr>,
     pub new_value: Option<Option<syn::Expr>>,
     pub serde_default: Option<TokenStream2>,
+    pub where_expr: Option<syn::Expr>,
+    pub get: bool,
+    pub get_mut: bool,
+    pub set: bool,
+    pub with: bool,
 }
 
 impl FieldAttr {
@@ -33,6 +44,11 @@ impl FieldAttr {
             default: None,
             new_value: None,
             serde_default: None,
+            where_expr: None,
+            get: false,
+            get_mut: false,
+            set: false,
+            with: false,
         }
     }
 
@@ -51,6 +67,13 @@ pub struct FieldsAttr {
     pub generics: syn::Generics,
     pub fields: Vec<FieldAttr>,
     pub fields_map: HashMap<String, FieldAttr>,
+    pub deref_field: Option<DerefField>,
+}
+
+pub struct DerefField {
+    pub name: Ident,
+    pub ty: syn::Type,
+    pub is_mut: bool,
 }
 
 impl FieldsAttr {
@@ -61,6 +84,7 @@ impl FieldsAttr {
         enabled: &Enabled,
     ) -> Result<Self, syn::Error> {
         let mut default_fields = Vec::new();
+        let mut deref_field: Option<DerefField> = None;
 
         for field in fields {
             let name: &syn::Ident = field.ident.as_ref().unwrap();
@@ -134,6 +158,221 @@ impl FieldsAttr {
                     comment.push(format!("new: `` {} ``", quote! { #val }));
                 }
             }
+            let mut field_deref: Option<bool> = None;
+            for attr in std::mem::take(&mut field.attrs) {
+                if !enabled.deref || !attr.path().is_ident("deref") {
+                    field.attrs.push(attr);
+                    continue;
+                }
+                let is_mut = match &attr.meta {
+                    Meta::Path(_) => false,
+                    Meta::List(_) => {
+                        let mut found = false;
+                        attr.parse_nested_meta(|meta| {
+                            if meta.path.is_ident("mut") && meta.input.is_empty() {
+                                found = true;
+                                Ok(())
+                            } else {
+                                Err(meta.error("Unsupported #[deref(...)] argument"))
+                            }
+                        })?;
+                        if !found {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "The #[deref(...)] attribute only supports #[deref(mut)]",
+                            ));
+                        }
+                        found
+                    }
+                    Meta::NameValue(_) => {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            "The #[deref] attribute does not accept name-value arguments",
+                        ));
+                    }
+                };
+                if field_deref.replace(is_mut).is_some() {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        format!(
+                            "The #[deref] attribute for field {name} can only be specified once"
+                        ),
+                    ));
+                }
+                if deref_field.is_some() {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        "Only one field can be marked with #[deref] or #[deref(mut)]",
+                    ));
+                }
+                deref_field = Some(DerefField {
+                    name: name.clone(),
+                    ty: field.ty.clone(),
+                    is_mut,
+                });
+            }
+            for attr in std::mem::take(&mut field.attrs) {
+                if !enabled.accessors {
+                    field.attrs.push(attr);
+                    continue;
+                }
+                if attr.path().is_ident("access") {
+                    match &attr.meta {
+                        Meta::Path(_) => {
+                            output.get = true;
+                            output.set = true;
+                        }
+                        Meta::List(_) => {
+                            let mut any = false;
+                            attr.parse_nested_meta(|meta| {
+                                if !meta.input.is_empty() {
+                                    if meta.path.is_ident("get") {
+                                        let mut is_mut = false;
+                                        meta.parse_nested_meta(|inner| {
+                                            if inner.path.is_ident("mut") && inner.input.is_empty() {
+                                                is_mut = true;
+                                                Ok(())
+                                            } else {
+                                                Err(inner.error("Unsupported #[access(get(...))] argument"))
+                                            }
+                                        })?;
+                                        if !is_mut {
+                                            return Err(meta.error(
+                                                "The #[access(get(...))] attribute only supports #[access(get(mut))]",
+                                            ));
+                                        }
+                                        output.get = true;
+                                        output.get_mut = true;
+                                        any = true;
+                                        return Ok(());
+                                    }
+                                    return Err(meta.error("Unsupported #[access(...)] argument"));
+                                }
+                                if meta.path.is_ident("get") {
+                                    output.get = true;
+                                    any = true;
+                                    Ok(())
+                                } else if meta.path.is_ident("set") {
+                                    output.set = true;
+                                    any = true;
+                                    Ok(())
+                                } else if meta.path.is_ident("with") {
+                                    output.with = true;
+                                    any = true;
+                                    Ok(())
+                                } else {
+                                    Err(meta.error("Unsupported #[access(...)] argument"))
+                                }
+                            })?;
+                            if !any {
+                                return Err(syn::Error::new(
+                                    attr.span(),
+                                    "The #[access(...)] attribute requires at least one of: get, set, with",
+                                ));
+                            }
+                        }
+                        Meta::NameValue(_) => {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "The #[access] attribute does not accept name-value arguments",
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                if attr.path().is_ident("get") {
+                    match &attr.meta {
+                        Meta::Path(_) => {
+                            output.get = true;
+                        }
+                        Meta::List(_) => {
+                            let mut is_mut = false;
+                            attr.parse_nested_meta(|meta| {
+                                if meta.path.is_ident("mut") && meta.input.is_empty() {
+                                    is_mut = true;
+                                    Ok(())
+                                } else {
+                                    Err(meta.error("Unsupported #[get(...)] argument"))
+                                }
+                            })?;
+                            if !is_mut {
+                                return Err(syn::Error::new(
+                                    attr.span(),
+                                    "The #[get(...)] attribute only supports #[get(mut)]",
+                                ));
+                            }
+                            output.get = true;
+                            output.get_mut = true;
+                        }
+                        Meta::NameValue(_) => {
+                            return Err(syn::Error::new(
+                                attr.span(),
+                                "The #[get] attribute does not accept name-value arguments",
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                if attr.path().is_ident("set") {
+                    if !matches!(attr.meta, Meta::Path(_)) {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            "The #[set] attribute does not accept any arguments",
+                        ));
+                    }
+                    if output.set {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            format!(
+                                "The #[set] attribute for field {name} can only be specified once"
+                            ),
+                        ));
+                    }
+                    output.set = true;
+                    continue;
+                }
+                if attr.path().is_ident("with") {
+                    if !matches!(attr.meta, Meta::Path(_)) {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            "The #[with] attribute does not accept any arguments",
+                        ));
+                    }
+                    if output.with {
+                        return Err(syn::Error::new(
+                            attr.span(),
+                            format!(
+                                "The #[with] attribute for field {name} can only be specified once"
+                            ),
+                        ));
+                    }
+                    output.with = true;
+                    continue;
+                }
+                field.attrs.push(attr);
+            }
+            for attr in std::mem::take(&mut field.attrs) {
+                if !enabled.validate || !attr.path().is_ident("check") {
+                    field.attrs.push(attr);
+                    continue;
+                }
+                let Meta::NameValue(ref val) = attr.meta else {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        format!(
+                            "The #[check] attribute must be in the form #[check = ...] for field {name}"
+                        ),
+                    ));
+                };
+                if output.where_expr.replace(val.value.clone()).is_some() {
+                    return Err(syn::Error::new(
+                        attr.span(),
+                        format!(
+                            "The #[check = ...] attribute for field {name} can only be specified once"
+                        ),
+                    ));
+                }
+            }
             if let Some(ref default) = output.default {
                 let mut default_fn = None;
                 for attr in std::mem::take(&mut field.attrs) {
@@ -203,6 +442,7 @@ impl FieldsAttr {
             generics: generics.clone(),
             fields: default_fields,
             fields_map,
+            deref_field,
         })
     }
 
@@ -231,5 +471,18 @@ impl FieldsAttr {
                 }
             }
         }
+    }
+
+    pub fn deref_target(&self) -> Option<(&Ident, &syn::Type, bool)> {
+        self.deref_field
+            .as_ref()
+            .map(|field| (&field.name, &field.ty, field.is_mut))
+    }
+
+    pub fn validate_entries(&self) -> Vec<(&Ident, &syn::Expr)> {
+        self.fields
+            .iter()
+            .filter_map(|f| f.where_expr.as_ref().map(|expr| (&f.name, expr)))
+            .collect()
     }
 }

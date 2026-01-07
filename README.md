@@ -17,6 +17,9 @@ The `#[data]` macro is the primary feature of this crate. It acts as a concise, 
 - `Default` handling: `#[data(default)]` either derives `Default` or generates a custom `Default` impl when field-level defaults are present.
 - Constructor generation: `#[data(new)]` creates a `pub fn new(...) -> Self` for structs with named fields; `#[data(new(default))]` generates `new()` delegating to `Default`.
 - Display helpers: `#[data(display(...))]` supports `debug`, `comma`, `semicolon`, and `space` variants to quickly implement `Display`.
+- Deref helpers: `#[deref]` / `#[deref(mut)]` on a field generate `Deref` / `DerefMut` to that field.
+- Validation helpers: `#[data(validate)]` generates `validate()`, with field checks from `#[check = ...]`.
+- Accessor helpers: `#[get]`, `#[get(mut)]`, `#[set]`, `#[with]`, or `#[access(...)]` generate getters/setters and chainable builders.
 - Optional integrations (behind features): `serde` support, `rkyv` support (with additional per-attribute options), and `bytemuck` support (`pod`, `zeroable`).
 
 ## Supported attributes
@@ -35,6 +38,19 @@ You can combine multiple options inside the `#[data(...)]` attribute. Examples o
 - `display(debug)` — implement `Display` by formatting with `{:?}`.
 - `display(comma|semicolon|space)` — implement `Display` by joining struct fields with `,`, `;`, or space respectively.
 - `new` and `new(default)` — generate `new` constructors. Field-level `new_value` and defaults are supported for more fine-grained constructor generation.
+- `validate` — generate a `validate()` method (see `#[check = ...]`).
+
+Field-level attributes (named structs):
+
+- `#[default = expr]` — set a field default (used by `#[data(default)]` / `#[default]`).
+- `#[new = expr]` / `#[new = _]` — set a field initializer for `new`.
+- `#[deref]` / `#[deref(mut)]` — select the deref target.
+- `#[check = expr]` — attach a boolean check used by `validate`, `set`, and `with`.
+- `#[get]` / `#[get(mut)]` — generate `get_xxx()` and `get_xxx_mut()`.
+- `#[set]` — generate `set_xxx(value)`.
+- `#[with]` — generate `with_xxx(value) -> Self`.
+- `#[access]` — shorthand for `get + set`.
+- `#[access(get,set,with)]` / `#[access(get(mut))]` — explicit accessor selection.
 
 ## Examples
 
@@ -92,5 +108,26 @@ impl Color {
     pub fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
+}
+```
+
+Accessor and validation helpers:
+
+```rust
+#[data(validate)]
+struct User {
+    #[check = name.len() > 0]
+    name: String,
+    #[check = *age >= 18]
+    age: u8,
+}
+
+#[data]
+struct Settings {
+    #[get]
+    name: String,
+    #[access(get(mut), set, with)]
+    #[check = tag.len() < 8]
+    tag: String,
 }
 ```

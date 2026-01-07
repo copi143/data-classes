@@ -22,6 +22,9 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     let enabled_attrs = &Enabled {
         default: true,
         new: false,
+        deref: false,
+        accessors: false,
+        validate: false,
         add_comment_on_changed: true,
     };
     let fields_attr = FieldsAttr::parse(
@@ -39,7 +42,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                         "#[default] can only be applied to structs with named fields",
                     )
                     .to_compile_error(),
-                ))
+                ));
             }
         },
         enabled_attrs,

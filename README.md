@@ -33,6 +33,8 @@ You can combine multiple options inside the `#[data(...)]` attribute. Examples o
 - `u8`, `u16`, `u32`, `u64`, `usize`, `i8`, `i16`, `i32`, `i64`, `isize` — use a specific integer `repr`.
 - `default` — derive or implement `Default` (field-level defaults may produce a custom `Default`).
 - `copy` — derive `Copy`.
+- `no-ord` — skip deriving `PartialOrd` and `Ord`.
+- `no-eq` — skip deriving `PartialEq` and `Eq`.
 - `serde` — (requires `serde` feature) derive `Serialize` and `Deserialize`.
 - `rkyv(...)` — (requires `rkyv` feature) enables `rkyv` derives and accepts sub-options like `no-cmp` and `omit-bounds`.
 - `pod`, `zeroable` — (require `bytemuck` feature) derive `bytemuck::Pod` / `bytemuck::Zeroable` and may adjust `repr` as needed.

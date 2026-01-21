@@ -1,7 +1,7 @@
+use proc_macro2::Span;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
-use proc_macro2::Span;
 use syn::{
     Token,
     parse::{Parse, ParseStream, Result},

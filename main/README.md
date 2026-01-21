@@ -20,6 +20,7 @@ The `#[data]` macro is the primary feature of this crate. It acts as a concise, 
 - Deref helpers: `#[deref]` / `#[deref(mut)]` on a field generate `Deref` / `DerefMut` to that field.
 - Validation helpers: `#[data(validate)]` generates `validate()`, with field checks from `#[check = ...]`.
 - Accessor helpers: `#[get]`, `#[get(mut)]`, `#[set]`, `#[with]`, or `#[access(...)]` generate getters/setters and chainable builders.
+- Builder helpers: `#[data(builder)]` generates `XxxBuilder` with `with_xxx()` and `build()`.
 - Optional integrations (behind features): `serde` support, `rkyv` support (with additional per-attribute options), and `bytemuck` support (`pod`, `zeroable`).
 
 ## Supported attributes
@@ -32,6 +33,8 @@ You can combine multiple options inside the `#[data(...)]` attribute. Examples o
 - `u8`, `u16`, `u32`, `u64`, `usize`, `i8`, `i16`, `i32`, `i64`, `isize` — use a specific integer `repr`.
 - `default` — derive or implement `Default` (field-level defaults may produce a custom `Default`).
 - `copy` — derive `Copy`.
+- `no-ord` — skip deriving `PartialOrd` and `Ord`.
+- `no-eq` — skip deriving `PartialEq` and `Eq`.
 - `serde` — (requires `serde` feature) derive `Serialize` and `Deserialize`.
 - `rkyv(...)` — (requires `rkyv` feature) enables `rkyv` derives and accepts sub-options like `no-cmp` and `omit-bounds`.
 - `pod`, `zeroable` — (require `bytemuck` feature) derive `bytemuck::Pod` / `bytemuck::Zeroable` and may adjust `repr` as needed.
@@ -39,6 +42,7 @@ You can combine multiple options inside the `#[data(...)]` attribute. Examples o
 - `display(comma|semicolon|space)` — implement `Display` by joining struct fields with `,`, `;`, or space respectively.
 - `new` and `new(default)` — generate `new` constructors. Field-level `new_value` and defaults are supported for more fine-grained constructor generation.
 - `validate` — generate a `validate()` method (see `#[check = ...]`).
+- `builder` — generate a `XxxBuilder` with `with_xxx()` and `build()`.
 
 Field-level attributes (named structs):
 
@@ -51,6 +55,7 @@ Field-level attributes (named structs):
 - `#[with]` — generate `with_xxx(value) -> Self`.
 - `#[access]` — shorthand for `get + set`.
 - `#[access(get,set,with)]` / `#[access(get(mut))]` — explicit accessor selection.
+- `#[builder(default)]` — initialize builder field with `Default::default()` instead of `Option`.
 
 ## Examples
 
@@ -130,4 +135,19 @@ struct Settings {
     #[check = tag.len() < 8]
     tag: String,
 }
+```
+
+Builder helper:
+
+```rust
+#[data(builder)]
+struct Project {
+    #[builder(default)]
+    tags: Vec<String>,
+    name: String,
+}
+
+let p = Project::builder()
+    .with_name("demo".to_string())
+    .build();
 ```

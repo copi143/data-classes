@@ -5,15 +5,12 @@ use syn::DeriveInput;
 use syn::spanned::Spanned;
 
 use crate::util::{
+    data_helpers::{
+        append_accessor_impls, append_builder_impl, append_deref_impls, append_validate_impl, error,
+    },
     fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr},
     parse_attr_tree::AttrArgs,
 };
-
-fn error<T>(span: Span, msg: impl std::fmt::Display) -> Result<T, TokenStream> {
-    Err(TokenStream::from(
-        syn::Error::new(span, msg.to_string()).to_compile_error(),
-    ))
-}
 
 pub fn fields_list(input: DeriveInput) -> Option<Vec<syn::Ident>> {
     match &input.data {
@@ -85,24 +82,63 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     let mut impls = Vec::new();
     let mut rkyv_derives = Vec::new();
 
+    let no_eq = if let Some(args) = attr.remove("no-eq") {
+        if !args.is_empty() {
+            return error(
+                Span::call_site(),
+                "#[data(no-eq)] does not accept any arguments",
+            );
+        }
+        true
+    } else {
+        false
+    };
+    let no_ord = if let Some(args) = attr.remove("no-ord") {
+        if !args.is_empty() {
+            return error(
+                Span::call_site(),
+                "#[data(no-ord)] does not accept any arguments",
+            );
+        }
+        true
+    } else if no_eq {
+        true
+    } else {
+        false
+    };
+
     derives.extend_from_slice(&[
         quote! { ::core::fmt::Debug },
         quote! { ::core::clone::Clone },
-        quote! { ::core::cmp::PartialEq },
-        quote! { ::core::cmp::Eq },
-        quote! { ::core::cmp::PartialOrd },
-        quote! { ::core::cmp::Ord },
-        quote! { ::core::hash::Hash },
     ]);
+    if !no_eq {
+        derives.extend_from_slice(&[
+            quote! { ::core::cmp::PartialEq },
+            quote! { ::core::cmp::Eq },
+        ]);
+    }
+    if !no_ord {
+        derives.extend_from_slice(&[
+            quote! { ::core::cmp::PartialOrd },
+            quote! { ::core::cmp::Ord },
+        ]);
+    }
+    derives.push(quote! { ::core::hash::Hash });
 
-    rkyv_derives.extend_from_slice(&[
-        quote! { ::core::fmt::Debug },
-        quote! { ::core::cmp::PartialEq },
-        quote! { ::core::cmp::Eq },
-        quote! { ::core::cmp::PartialOrd },
-        quote! { ::core::cmp::Ord },
-        quote! { ::core::hash::Hash },
-    ]);
+    rkyv_derives.extend_from_slice(&[quote! { ::core::fmt::Debug }]);
+    if !no_eq {
+        rkyv_derives.extend_from_slice(&[
+            quote! { ::core::cmp::PartialEq },
+            quote! { ::core::cmp::Eq },
+        ]);
+    }
+    if !no_ord {
+        rkyv_derives.extend_from_slice(&[
+            quote! { ::core::cmp::PartialOrd },
+            quote! { ::core::cmp::Ord },
+        ]);
+    }
+    rkyv_derives.push(quote! { ::core::hash::Hash });
 
     macro_rules! repr_with_no_args {
         ($name:expr, $quote:expr) => {
@@ -185,12 +221,12 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
             } else {
                 let default_fields = attrs.entries();
                 impls.push(quote! {
-                impl #impl_generics Default for #ident #ty_generics #where_clause {
-                    fn default() -> Self {
-                        Self {
-                            #(#default_fields),*
+                    impl #impl_generics Default for #ident #ty_generics #where_clause {
+                        fn default() -> Self {
+                            Self {
+                                #(#default_fields),*
+                            }
                         }
-                    }
                     }
                 });
             }
@@ -265,237 +301,38 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         impls.push(attrs.serde_default_fns());
     }
 
-    if let Some(attrs) = &fields_attr {
-        if let Some((name, ty, is_mut)) = attrs.deref_target() {
-            impls.push(quote! {
-                impl #impl_generics ::core::ops::Deref for #ident #ty_generics #where_clause {
-                    type Target = #ty;
-                    fn deref(&self) -> &Self::Target {
-                        &self.#name
-                    }
-                }
-            });
-            if is_mut {
-                impls.push(quote! {
-                    impl #impl_generics ::core::ops::DerefMut for #ident #ty_generics #where_clause {
-                        fn deref_mut(&mut self) -> &mut Self::Target {
-                            &mut self.#name
-                        }
-                    }
-                });
-            }
-        }
-    }
-
-    if let Some(attrs) = &fields_attr {
-        for field in attrs.fields.iter() {
-            let name = &field.name;
-            let ty = &field.ty;
-            let get_name =
-                syn::Ident::new(&format!("get_{}", name), proc_macro2::Span::call_site());
-            let get_mut_name =
-                syn::Ident::new(&format!("get_{}_mut", name), proc_macro2::Span::call_site());
-            let set_name =
-                syn::Ident::new(&format!("set_{}", name), proc_macro2::Span::call_site());
-            let with_name =
-                syn::Ident::new(&format!("with_{}", name), proc_macro2::Span::call_site());
-            if field.get {
-                impls.push(quote! {
-                    impl #impl_generics #ident #ty_generics #where_clause {
-                        pub fn #get_name(&self) -> &#ty {
-                            &self.#name
-                        }
-                    }
-                });
-            }
-            if field.get_mut {
-                impls.push(quote! {
-                    impl #impl_generics #ident #ty_generics #where_clause {
-                        pub fn #get_mut_name(&mut self) -> &mut #ty {
-                            &mut self.#name
-                        }
-                    }
-                });
-            }
-            if field.set {
-                let check = field.where_expr.as_ref().map(|expr| {
-                    quote! {
-                        let #name = &value;
-                        if !(#expr) {
-                            panic!("check failed for field {}", stringify!(#name));
-                        }
-                    }
-                });
-                impls.push(quote! {
-                    impl #impl_generics #ident #ty_generics #where_clause {
-                        pub fn #set_name(&mut self, value: #ty) {
-                            #check
-                            self.#name = value;
-                        }
-                    }
-                });
-            }
-            if field.with {
-                let check = field.where_expr.as_ref().map(|expr| {
-                    quote! {
-                        let #name = &value;
-                        if !(#expr) {
-                            panic!("check failed for field {}", stringify!(#name));
-                        }
-                    }
-                });
-                impls.push(quote! {
-                    impl #impl_generics #ident #ty_generics #where_clause {
-                        pub fn #with_name(mut self, value: #ty) -> Self {
-                            #check
-                            self.#name = value;
-                            self
-                        }
-                    }
-                });
-            }
-        }
-    }
-
-    if let Some(args) = attr.remove("validate") {
-        if !args.is_empty() {
-            return error(
-                Span::call_site(),
-                "#[data(validate)] does not accept any arguments",
-            );
-        }
-        let Some(attrs) = &fields_attr else {
-            return error(
-                Span::call_site(),
-                "#[data(validate)] can only be applied to structs with named fields",
-            );
-        };
-        let checks = attrs.validate_entries();
-        let binds = checks
-            .iter()
-            .map(|(name, _)| quote! { let #name = &self.#name; });
-        let exprs = checks.iter().map(|(_, expr)| quote! { (#expr) });
-        let body = if checks.is_empty() {
-            quote! { true }
-        } else {
-            quote! { true #(&& #exprs)* }
-        };
-        impls.push(quote! {
-            impl #impl_generics #ident #ty_generics #where_clause {
-                pub fn validate(&self) -> bool {
-                    #(#binds)*
-                    #body
-                }
-            }
-        });
-    }
-
-    if let Some(args) = attr.remove("builder") {
-        if !args.is_empty() {
-            return error(Span::call_site(), "#[data(builder)] does not accept any arguments");
-        }
-        let Some(attrs) = &fields_attr else {
-            return error(
-                Span::call_site(),
-                "#[data(builder)] can only be applied to structs with named fields",
-            );
-        };
-        let builder_ident = syn::Ident::new(
-            &format!("{}Builder", ident),
-            proc_macro2::Span::call_site(),
-        );
-        let builder_generics = &input.generics;
-        let builder_fields = attrs.fields.iter().map(|f| {
-            let name = &f.name;
-            let ty = &f.ty;
-            if f.builder_default {
-                quote! { #name: #ty }
-            } else {
-                quote! { #name: ::core::option::Option<#ty> }
-            }
-        });
-        let builder_inits = attrs.fields.iter().map(|f| {
-            let name = &f.name;
-            if f.builder_default {
-                quote! { #name: ::core::default::Default::default() }
-            } else {
-                quote! { #name: ::core::option::Option::None }
-            }
-        });
-        let with_fns = attrs.fields.iter().map(|f| {
-            let name = &f.name;
-            let ty = &f.ty;
-            let with_name =
-                syn::Ident::new(&format!("with_{}", name), proc_macro2::Span::call_site());
-            let assign = if f.builder_default {
-                quote! { self.#name = value; }
-            } else {
-                quote! { self.#name = ::core::option::Option::Some(value); }
-            };
-            quote! {
-                pub fn #with_name(mut self, value: #ty) -> Self {
-                    #assign
-                    self
-                }
-            }
-        });
-        let build_fields = attrs.fields.iter().map(|f| {
-            let name = &f.name;
-            let ty = &f.ty;
-            let check = f.where_expr.as_ref().map(|expr| {
-                quote! {
-                    let #name = &value;
-                    if !(#expr) {
-                        panic!("check failed for field {}", stringify!(#name));
-                    }
-                }
-            });
-            if f.builder_default {
-                quote! {
-                    let value: #ty = self.#name;
-                    #check
-                    let #name = value;
-                }
-            } else {
-                quote! {
-                    let value: #ty = match self.#name {
-                        ::core::option::Option::Some(value) => value,
-                        ::core::option::Option::None => {
-                            panic!("missing field {}", stringify!(#name));
-                        }
-                    };
-                    #check
-                    let #name = value;
-                }
-            }
-        });
-        let build_init = attrs.fields.iter().map(|f| {
-            let name = &f.name;
-            quote! { #name }
-        });
-        impls.push(quote! {
-            pub struct #builder_ident #builder_generics {
-                #(#builder_fields),*
-            }
-
-            impl #impl_generics #builder_ident #ty_generics #where_clause {
-                #(#with_fns)*
-
-                pub fn build(self) -> #ident #ty_generics {
-                    #(#build_fields)*
-                    #ident { #(#build_init),* }
-                }
-            }
-
-            impl #impl_generics #ident #ty_generics #where_clause {
-                pub fn builder() -> #builder_ident #ty_generics {
-                    #builder_ident {
-                        #(#builder_inits),*
-                    }
-                }
-            }
-        });
-    }
+    append_deref_impls(
+        &fields_attr,
+        &impl_generics,
+        &ty_generics,
+        where_clause,
+        &mut impls,
+    );
+    append_accessor_impls(
+        &fields_attr,
+        &impl_generics,
+        &ty_generics,
+        where_clause,
+        &mut impls,
+    );
+    append_validate_impl(
+        &mut attr,
+        &fields_attr,
+        &impl_generics,
+        &ty_generics,
+        where_clause,
+        &mut impls,
+    )?;
+    append_builder_impl(
+        &mut attr,
+        &fields_attr,
+        ident,
+        &input.generics,
+        &impl_generics,
+        &ty_generics,
+        where_clause,
+        &mut impls,
+    )?;
 
     #[cfg(feature = "bytemuck")]
     if let Some(args) = attr.remove("pod") {

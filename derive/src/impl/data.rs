@@ -4,13 +4,11 @@ use quote::quote;
 use syn::DeriveInput;
 use syn::spanned::Spanned;
 
-use crate::util::{
-    data_helpers::{
-        append_accessor_impls, append_builder_impl, append_deref_impls, append_validate_impl, error,
-    },
-    fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr},
-    parse_attr_tree::AttrArgs,
+use crate::util::data_helpers::{
+    append_accessor_impls, append_builder_impl, append_deref_impls, append_validate_impl, error,
 };
+use crate::util::fields_attr::{Enabled as FieldsAttrEnabledFeatures, FieldsAttr};
+use crate::util::parse_attr_tree::AttrArgs;
 
 pub fn fields_list(input: DeriveInput) -> Option<Vec<syn::Ident>> {
     match &input.data {
@@ -79,6 +77,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
 
     let mut reprs = Vec::new();
     let mut derives = Vec::new();
+    let mut macros = Vec::new();
     let mut impls = Vec::new();
     let mut rkyv_derives = Vec::new();
 
@@ -295,7 +294,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     }
 
     #[cfg(feature = "serde")]
-    data_serde(&mut derives, &mut attr)?;
+    data_serde(&mut derives, &mut macros, repr_transparent, &mut attr)?;
     #[cfg(feature = "serde")]
     if let Some(attrs) = &fields_attr {
         impls.push(attrs.serde_default_fns());
@@ -568,13 +567,11 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
         );
     }
 
-    let rkyv_derives = if rkyv.is_some() {
-        quote! { #[rkyv(derive(#(#rkyv_derives),*))] }
-    } else {
-        quote! {}
-    };
+    if rkyv.is_some() {
+        macros.push(quote! { #[rkyv(derive(#(#rkyv_derives),*))] });
+    }
 
-    let rkyv_compares = if let Some(rkyv) = &mut rkyv {
+    if let Some(rkyv) = &mut rkyv {
         if let Some(args) = rkyv.remove("no-cmp") {
             if !args.is_empty() {
                 return error(
@@ -582,15 +579,12 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                     "#[data(rkyv(no-cmp))] does not accept any arguments",
                 );
             }
-            quote! {}
         } else {
-            quote! { #[rkyv(compare(PartialEq, PartialOrd))] }
+            macros.push(quote! { #[rkyv(compare(PartialEq, PartialOrd))] });
         }
-    } else {
-        quote! {}
-    };
+    }
 
-    let rkyv_bounds = if rkyv.is_some()
+    if rkyv.is_some()
         && let Some(args) = rkyv.as_mut().unwrap().remove("omit-bounds")
     {
         if !args.is_empty() {
@@ -599,14 +593,12 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
                 "#[data(rkyv(omit-bounds))] does not accept any arguments",
             );
         }
-        quote! {
+        macros.push(quote! {
             #[rkyv(serialize_bounds(__S: ::rkyv::ser::Writer + ::rkyv::ser::Allocator, __S::Error: ::rkyv::rancor::Source))]
             #[rkyv(deserialize_bounds(__D::Error: ::rkyv::rancor::Source))]
             #[rkyv(bytecheck(bounds(__C: ::rkyv::validation::ArchiveContext)))]
-        }
-    } else {
-        quote! {}
-    };
+        });
+    }
 
     if let Some(rkyv) = rkyv
         && !rkyv.is_empty()
@@ -620,9 +612,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     let expanded = quote! {
         #[repr(#(#reprs),*)]
         #[derive(#(#derives),*)]
-        #rkyv_derives
-        #rkyv_compares
-        #rkyv_bounds
+        #(#macros)*
         #input
         #(#impls)*
     };
@@ -630,7 +620,12 @@ pub fn main(attr: TokenStream, item: TokenStream) -> Result<TokenStream, TokenSt
     Ok(TokenStream::from(expanded))
 }
 
-fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) -> Result<(), TokenStream> {
+fn data_serde(
+    derives: &mut Vec<TokenStream2>,
+    macros: &mut Vec<TokenStream2>,
+    repr_transparent: bool,
+    attr: &mut AttrArgs,
+) -> Result<(), TokenStream> {
     if let Some(mut args) = attr.remove("serde") {
         if args.is_empty() {
             derives.push(quote! { ::data_classes::deps::serde::Serialize });
@@ -659,6 +654,9 @@ fn data_serde(derives: &mut Vec<TokenStream2>, attr: &mut AttrArgs) -> Result<()
                 Span::call_site(),
                 format!("#[data(serde)] has unsupported arguments: {args}"),
             );
+        }
+        if repr_transparent {
+            macros.push(quote! { #[serde(transparent)] });
         }
     }
     Ok(())
